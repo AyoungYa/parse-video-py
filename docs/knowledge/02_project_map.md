@@ -57,11 +57,11 @@ confidence: high
 |---|---|---|---|---|---|
 | BaseParser | `parser/base.py` | 定义解析器抽象基类、数据结构、VideoSource 枚举 | 所有解析器 | **高** | `parser/base.py` |
 | 解析器路由 | `parser/__init__.py` | VideoSource→域名→解析器映射、`parse_video_share_url()`、`parse_video_id()` | web.py、cli | **高** | `parser/__init__.py:29-193` |
-| Web 应用 | `web.py` | FastAPI 路由、Basic Auth、MCP 挂载 | uvicorn | **高** | `web.py` |
+| Web 应用 | `web.py` | FastAPI 路由、Basic Auth、下载代理、MCP 挂载 | uvicorn | **高** | `web.py` |
 | CLI 入口 | `cli/__init__.py` | Typer 命令注册（parse/serve/version） | pyproject.toml scripts | 中 | `cli/__init__.py` |
 | CLI 解析逻辑 | `cli/_parse.py` | 解析命令核心逻辑、批量解析、并发控制 | cli/__init__.py | 中 | `cli/_parse.py` |
 | CLI 输出 | `cli/output.py` | 结果格式化（text/json） | cli/_parse.py | 低 | `cli/output.py` |
-| 工具函数 | `utils.py` | URL 提取、query 参数解析、HTTP 客户端工厂 | web.py、cli/_parse.py、所有解析器 | **高** | `utils.py` |
+| 工具函数 | `utils.py` | URL 提取、query 参数解析、HTTP 客户端工厂、下载代理请求头构造 | web.py、cli/_parse.py、所有解析器 | **高** | `utils.py` |
 | 26 个解析器 | `parser/*.py` | 各平台视频/图集解析 | parser/__init__.py 路由 | 中 | `parser/` |
 
 ## 外部依赖
@@ -90,6 +90,7 @@ confidence: high
 | GET | `/` | Web 界面 | `web.py:read_item` | `web.py:64` |
 | GET | `/video/share/url/parse` | 分享链接解析 | `web.py:share_url_parse` | `web.py:75` |
 | GET | `/video/id/parse` | 视频 ID 解析 | `web.py:video_id_parse` | `web.py:98` |
+| GET | `/video/download` | CDN 资源下载代理（防盗链转发） | `web.py:video_download` | `web.py` |
 | MCP | `/mcp` | AI 工具集成 | FastApiMCP 自动注册 | `web.py:26-27,114` |
 
 ## 环境变量

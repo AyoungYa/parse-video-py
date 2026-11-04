@@ -1,0 +1,134 @@
+"""算力机服务配置。
+
+设计取向：**配置全部来自环境变量，代码里不写死任何路径**——因为这台机器换一台就全变了。
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = os.getenv("SECRET_KEY", "worker-local-only")
+DEBUG = os.getenv("DEBUG", "0") == "1"
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+INSTALLED_APPS = [
+    "django.contrib.contenttypes",
+    "django.contrib.staticfiles",
+    "core",
+]
+
+MIDDLEWARE = [
+    "django.middleware.common.CommonMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+WSGI_APPLICATION = "config.wsgi.application"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {"context_processors": []},
+    }
+]
+
+# 本地 SQLite：只存任务镜像与心跳日志，丢了不影响云端状态
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": Path(os.getenv("WORKER_DB_PATH", BASE_DIR / "worker.sqlite3")),
+    }
+}
+
+LANGUAGE_CODE = "zh-hans"
+TIME_ZONE = "Asia/Shanghai"
+USE_TZ = True
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+STATIC_URL = "/static/"
+
+# ---------------- 与云端联动（必须和 cloud_web 的 settings 对齐）----------------
+CLOUD_BASE_URL = os.getenv("CLOUD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+WORKER_ID = os.getenv("WORKER_ID", "pc-01")
+WORKER_TOKEN = os.getenv("WORKER_TOKEN", "")
+WORKER_NAME = os.getenv("WORKER_NAME", WORKER_ID)
+
+CLAIM_TIMEOUT = int(os.getenv("CLAIM_TIMEOUT", "30"))  # 略大于云端 25s
+HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "15"))
+LEASE_SECONDS = int(os.getenv("LEASE_SECONDS", "90"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "60"))
+
+# ---------------- 本机算力 ----------------
+TORCH_DEVICE = os.getenv("TORCH_DEVICE", "cuda")  # cuda / mps / cpu
+MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "1"))
+UPLOAD_CONCURRENCY = int(os.getenv("UPLOAD_CONCURRENCY", "1"))  # 家宽上行，别调大
+
+# 修复脚本目录（skill 的 scripts/ 或本仓库 src/skill/）
+WM_SCRIPTS_DIR = Path(os.getenv("WM_SCRIPTS_DIR", BASE_DIR / "scripts"))
+# 临时工作区：原片、mask、成片、报告都落在这里，任务结束后删除
+WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", BASE_DIR / "workspace"))
+# 用哪个 python 解释器跑脚本（默认同当前解释器）
+WM_PYTHON = os.getenv("WM_PYTHON", sys.executable)
+
+# ---------------- 处理阶段（命令模板）----------------
+# ★ 这里刻意做成「可配置的命令模板」而不是硬编码：
+#   不同版本的 skill 脚本参数名可能不同，改 .env 就能适配，不用改代码。
+#   可用占位符：{python} {scripts} {work} {input} {mask} {out} {report} {bbox} {pad} {device}
+#   判定成功只看**退出码 0**（踩坑手册铁律 2：日志里出现"完成"不代表成功）。
+WM_STAGES_TEMPLATE = [
+    {
+        "name": "build_mask",
+        "enabled_when": "no_mask",  # 仅当云端没给 mask 时执行
+        "cmd": [
+            "{python}",
+            "{scripts}/build_mask.py",
+            "--input", "{input}",
+            "--out", "{mask}",
+            "--bbox", "{bbox}",
+            "--device", "{device}",
+        ],
+    },
+    {
+        "name": "lama_apply",
+        "required": True,
+        "cmd": [
+            "{python}",
+            "{scripts}/lama_apply_maskonly.py",
+            "--input", "{input}",
+            "--mask", "{mask}",
+            "--out", "{out}",
+            "--bbox", "{bbox}",
+            "--pad", "{pad}",
+            "--device", "{device}",
+            "--keyframe-every", "1",
+        ],
+    },
+    {
+        "name": "verify",
+        "required": False,
+        "cmd": [
+            "{python}",
+            "{scripts}/verify.py",
+            "--original", "{input}",
+            "--processed", "{out}",
+            "--mask", "{mask}",
+            "--out", "{report}",
+        ],
+    },
+]
+
+DEFAULT_PAD = int(os.getenv("DEFAULT_PAD", "10"))
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "[{asctime}] {levelname} {name}: {message}", "style": "{"}
+    },
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "verbose"}},
+    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+}

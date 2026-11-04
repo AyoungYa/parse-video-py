@@ -109,10 +109,25 @@ export PARSE_VIDEO_PROXY=http://proxy.example.com:端口
 export PARSE_VIDEO_PROXY=http://user:pass@proxy.example.com:端口
 ```
 
+### 如需解析微博（可选），请设置 Cookie 环境变量
+微博会对未登录请求做访客风控，可能把请求重定向到登录页（报 `weibo 要求登录`）。
+单条微博链接（`https://weibo.com/<uid>/<mid>`）通常无需 Cookie；如遇拦截，可传入浏览器 Cookie：
+```shell
+# 浏览器 F12 → Network → 任意 weibo.com 请求 → Request Headers → Cookie 整串复制
+export PARSE_VIDEO_WEIBO_COOKIE='SUB=xxx; SUBP=xxx; SSOLoginState=xxx'
+```
+> Cookie 有有效期，过期后需重新复制。请勿将其硬编码进代码或提交到仓库。
+
 ### 运行app
+> ⚠️ 需先执行上面的 `uv pip install -e ".[all]"` 完成可编辑安装，并在**项目根目录**下执行，
+> 否则会报 `ModuleNotFoundError: No module named 'parse_video_py'`。
+
 ```shell
 uvicorn parse_video_py.web:app --reload
 ```
+
+> 调试提示：`--reload` 由 reloader 父进程 + 子进程实现，**PyCharm 断点常不生效**。
+> 需要打断点调试时请去掉 `--reload`；需限制文件监听范围可加 `--reload-dir src`。
 
 ## Docker运行
 ### 获取 docker image
@@ -133,6 +148,11 @@ docker run -d -p 8000:8000 -e PARSE_VIDEO_USERNAME=username -e PARSE_VIDEO_PASSW
 ### 运行docker容器，设置代理
 ```bash
 docker run -d -p 8000:8000 -e PARSE_VIDEO_PROXY=http://proxy.example.com:端口 wujunwei928/parse-video-py
+```
+
+### 运行docker容器，传入微博 Cookie（可选）
+```bash
+docker run -d -p 8000:8000 -e PARSE_VIDEO_WEIBO_COOKIE='SUB=xxx; SUBP=xxx' wujunwei928/parse-video-py
 ```
 
 # 查看前端页面

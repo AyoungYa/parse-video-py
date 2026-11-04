@@ -1,0 +1,26 @@
+# 构建上下文瘦身。没有这个文件时 COPY . . 会把 .venv（数百 MB）和
+# frontend/node_modules 一起塞进镜像，构建会慢到离谱。
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 密钥绝不进镜像
+.env
+.env.*
+!.env.example
+
+# 前端依赖与产物都在 node 阶段重新生成
+frontend/node_modules/
+frontend/dist/
+
+# 运行时产物
+staticfiles/
+*.log
+*.sqlite3
+.DS_Store
+
+# 证书文件由 volume 挂载，不进镜像
+deploy/certs/

@@ -154,6 +154,68 @@ confidence: high
 
 ---
 
+## 流程：下载代理转发（防盗链 403 修复）
+
+### 是否已确认
+
+- 状态：已确认
+- 证据来源：`web.py:video_download`、`utils.py:build_download_header_candidates()`、`templates/index.html:proxyUrl()`
+
+### 背景
+
+各平台 CDN 对直链下载做防盗链校验，浏览器直接打开解析结果中的 `video_url` 会返回
+`403 Forbidden`（微博 CDN 返回 Tengine 错误页）。实测微博/新浪 CDN 的放行条件是
+**"浏览器 UA + 平台站内 Referer"** 或 **"完全不带 UA 的请求"**，携带第三方 Referer
+（含本页来源）一律 403，因此无法通过前端 `referrerpolicy` 解决，必须由服务端代理转发。
+
+### 触发入口
+
+| 类型 | 路径/接口/命令 | 入口代码 |
+|---|---|---|
+| HTTP API | `GET /video/download?url=<原始CDN地址>&filename=<可选文件名>` | `web.py:video_download` |
+| 前端（下载按钮） | `proxyUrl(data.video_url, '标题.mp4')` | `templates/index.html:proxyUrl()` |
+| 前端（`<img>` 内联） | `proxyUrl(item.url)`（不传 filename） | `templates/index.html` |
+
+### 执行链路
+
+1. 校验目标地址：`utils.py:is_downloadable_url()` 仅允许 http/https，拒绝 localhost 与内网地址
+2. 生成请求头候选：`utils.py:build_download_header_candidates()` 按优先级返回
+   `[浏览器 UA + 平台 Referer]` → `[仅浏览器 UA]` → `[无任何伪装头]`
+3. 逐个候选发起上游请求（`httpx` 流式），透传浏览器的 `Range` 头
+4. 命中 200/206 即开始按块流式回传；全部候选失败返回 `502`
+5. 转发响应头：`Content-Type`、`Content-Length`、`Content-Range`、`Accept-Ranges`、`ETag`、`Last-Modified`
+6. 传了 `filename` 时附加 `Content-Disposition: attachment`（含 RFC 5987 编码的中文文件名），
+   否则内联返回，供页面 `<img>` 直接引用
+
+### 关键代码
+
+| 类/函数/文件 | 职责 | 来源 |
+|---|---|---|
+| `video_download()` | 下载代理路由：校验 → 候选重试 → 流式转发 | `web.py` |
+| `_iter_upstream()` | 按块转发上游响应体并释放连接 | `web.py` |
+| `build_download_header_candidates()` | 生成防盗链请求头候选列表 | `utils.py` |
+| `match_download_referer()` | CDN 域名 → 平台 Referer 匹配 | `utils.py` |
+| `is_downloadable_url()` | 目标地址合法性/SSRF 防护 | `utils.py` |
+| `_DOWNLOAD_REFERER_RULES` | 域名关键字 → Referer 规则表 | `utils.py` |
+| `proxyUrl()` | 前端拼接代理地址 | `templates/index.html` |
+
+### 异常处理
+
+- 非 http/https 或内网地址：返回 `{"code": 400, "msg": "不支持的下载地址"}`
+- 上游请求异常：返回 `{"code": 502, "msg": "下载失败: <err>"}`
+- 所有候选头均被拒（如 403）：返回 `{"code": 502, "msg": "下载失败, 上游返回状态码: 403"}`
+
+### 修改风险
+
+- 新增平台 Referer 规则只需追加 `_DOWNLOAD_REFERER_RULES`，不影响解析链路
+- 改动本流程不影响 `VideoInfo` 数据结构与解析器路由
+
+### 未确认事项
+
+- 无
+
+---
+
 ## 流程：Basic Auth 鉴权
 
 ### 是否已确认

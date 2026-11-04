@@ -1,0 +1,12 @@
+[flake8]
+max-line-length = 88
+# E203: black 会在切片里写 `a[0 :3]`，与 flake8 的 E203 冲突。
+# 这是 black 官方文档给出的推荐忽略项（非本项目代码风格问题）。
+extend-ignore = E203
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    build,
+    dist,
+    wm_studio_workspace

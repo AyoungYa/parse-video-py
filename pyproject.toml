@@ -27,6 +27,18 @@ cli = [
     "typer>=0.12",
     "rich>=13.0",
 ]
+# 去水印调参台（wm-studio）。与 web 一起装：uv pip install -e ".[web,wm]"
+# torch 体积大且需按平台选源，故不并入 web，单独成组避免拖重纯解析服务。
+wm = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "opencv-python>=4.9",
+    "scipy>=1.11",
+    "pillow>=10.0",
+    "numpy>=1.24,<2.0",
+    "simple-lama-inpainting>=0.1.2",
+    "imageio-ffmpeg>=0.5",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -36,10 +48,13 @@ dev = [
     "flake8>=7.0",
     "pre-commit>=3.7",
 ]
+# ★ all 刻意**不含 wm**：wm 依赖 torch（约 2GB），是单独的可选工具，
+#   不该让"装全部"变成拉 2GB。要用调参台请显式 `.[web,wm]`。
 all = ["parse-video-py[web,cli]"]
 
 [project.scripts]
 parse-video-py = "parse_video_py.cli:app"
+wm-studio = "parse_video_py.wm_studio.server:main"
 
 [build-system]
 requires = ["hatchling"]

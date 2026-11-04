@@ -2748,7 +2748,7 @@
             <p>
                 <strong>温馨提示: </strong><br/>
                 1. 粘贴视频地址时<u>无需删除文案</u><small> 但如果视频链接正确但解析失败请删掉文案后重试</small><br/>
-                2. 点击下载视频跳转时, 可能会被对应网站识别, 报 <u>403 Forbidden</u>, 可以在 下载视频 按钮, 右键复制链接地址, 新开浏览器标签页打开即可
+                2. 下载封面/视频/音频会经本地服务代理转发, 自动补齐防盗链 Referer 与 UA, 不会再报 <u>403 Forbidden</u>
             </p>
             <hr/>
         </div>
@@ -2841,6 +2841,34 @@ function showThemeNotification(themeName) {
 }
 
 // 原有的解析功能
+// 生成下载代理地址: 传 filename 时服务端以附件返回, 不传则内联返回(供 <img> 直接引用)
+function proxyUrl(url, filename) {
+    let proxy = '/video/download?url=' + encodeURIComponent(url);
+    if (filename) {
+        proxy += '&filename=' + encodeURIComponent(filename);
+    }
+    return proxy;
+}
+
+// 将标题转为安全的文件名前缀(去除路径分隔符等非法字符)
+function safeFileBase(text) {
+    const base = (text || '')
+        .replace(/[\\/:*?"<>|\r\n\t]+/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return (base || 'download').slice(0, 60);
+}
+
+// 从原始地址推断媒体扩展名, 推断不出则用默认值
+function mediaExt(url, fallback) {
+    try {
+        const matched = new URL(url).pathname.toLowerCase().match(/\.(mp4|mov|m4v|webm|mp3|m4a|aac|flac|jpg|jpeg|png|gif|webp|heic)$/);
+        return matched ? matched[1] : fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
 function setValue() {
     var data = document.getElementById("url").value;
     let regex = /http[s]?:\/\/[\w.-]+[\w\/-]*[\w.-]*\??[\w=&:\-\+\%]*[/]*/;
@@ -2865,16 +2893,17 @@ function setValue() {
         });
 
         let successHtml = '<h4>' + jsonObj.data.title + ' </h4>';
-        successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.cover_url + '" target="_blank" download="video" referrerpolicy="no-referrer"><span>下载封面</span></a>';
+        const fileBase = safeFileBase(jsonObj.data.title);
+        successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + proxyUrl(jsonObj.data.cover_url, fileBase + '_cover.' + mediaExt(jsonObj.data.cover_url, 'jpg')) + '" target="_blank" referrerpolicy="no-referrer"><span>下载封面</span></a>';
 
         // 如果video_url不为空, 则显示下载视频按钮
         if (jsonObj.data.video_url != "") {
-            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.video_url + '" target="_blank" download="video" referrerpolicy="no-referrer"><span>下载视频</span></a>';
+            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + proxyUrl(jsonObj.data.video_url, fileBase + '.' + mediaExt(jsonObj.data.video_url, 'mp4')) + '" target="_blank" referrerpolicy="no-referrer"><span>下载视频</span></a>';
         }
 
         // 如果music_url不为空, 则显示下载音频按钮
         if (jsonObj.data.music_url && jsonObj.data.music_url != "") {
-            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.music_url + '" target="_blank" download="audio" referrerpolicy="no-referrer"><span>下载音频</span></a>';
+            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + proxyUrl(jsonObj.data.music_url, fileBase + '.' + mediaExt(jsonObj.data.music_url, 'mp3')) + '" target="_blank" referrerpolicy="no-referrer"><span>下载音频</span></a>';
         }
 
         // 如果 jsonObj.data.images 是数组， 并且长度大于0, 则img展示图片
@@ -2897,10 +2926,10 @@ function setValue() {
 
             jsonObj.data.images.forEach(function (item) {
                 successHtml += '<div style="display: inline-block; margin: 1em; text-align: center;">';
-                successHtml += '<img src="' + item.url + '" referrerpolicy="no-referrer" style="width: 160px; display: block; margin-bottom: 0.5em;"/>';
+                successHtml += '<img src="' + proxyUrl(item.url) + '" referrerpolicy="no-referrer" style="width: 160px; display: block; margin-bottom: 0.5em;"/>';
                 // 如果 item.live_photo_url 不为空， 显示下载按钮
                 if (item.live_photo_url) {
-                    successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + item.live_photo_url + '" target="_blank" download="video" referrerpolicy="no-referrer" style="text-transform: none;"><span>下载LivePhoto</span></a>';
+                    successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + proxyUrl(item.live_photo_url, fileBase + '_live.' + mediaExt(item.live_photo_url, 'mp4')) + '" target="_blank" referrerpolicy="no-referrer" style="text-transform: none;"><span>下载LivePhoto</span></a>';
                 }
 
                 successHtml += '</div>';
@@ -2994,12 +3023,8 @@ async function downloadAllImages(imagesData, title) {
         // 下载所有图片
         const downloadPromises = images.map(async (item, index) => {
             try {
-                const response = await fetch(item.url, {
-                    headers: {
-                        'Referer': 'https://www.douyin.com/',
-                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'
-                    }
-                });
+                // 浏览器 fetch 禁止自定义 Referer/User-Agent, 改由本地代理补齐防盗链请求头
+                const response = await fetch(proxyUrl(item.url));
 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);

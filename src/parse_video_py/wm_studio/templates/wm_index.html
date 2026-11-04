@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>去水印调参台</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --txt:#e6e9ef; --dim:#98a0ae; --accent:#4c9aff; --ok:#3ecf8e;
+    --bad:#ff6b6b; --warn:#ffb648;
+    /* 字号阶梯：整体调这里即可 */
+    --fs:14.5px;      /* 正文 */
+    --fs-sm:13px;     /* 次要（hint、note、badge） */
+    --fs-xs:12px;     /* 最小（日志、mono） */
+    --fs-h2:13px;     /* 卡片标题 */
+    /* 右栏（参数区）宽度：调这一处即可。窗口越宽右栏越大，但有上下限 */
+    --rw:clamp(400px,30vw,520px);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:var(--fs)/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;
+         background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:15.5px;margin:0;font-weight:600;letter-spacing:.3px}
+  header .sub{color:var(--dim);font-size:var(--fs-sm)}
+  .wrap{display:grid;grid-template-columns:1fr var(--rw);height:calc(100vh - 47px)}
+  .left{overflow:auto;padding:14px}
+  .right{overflow:auto;border-left:1px solid var(--line);background:var(--panel)}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+        padding:12px;margin-bottom:12px}
+  .card h2{font-size:var(--fs-h2);margin:0 0 10px;color:var(--dim);font-weight:600;
+           text-transform:uppercase;letter-spacing:.6px}
+  input,select,button{font:inherit;color:var(--txt);background:#12151b;
+        border:1px solid var(--line);border-radius:6px;padding:7px 9px}
+  input[type=range]{padding:0;background:none;border:none}
+  button{cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.danger{background:#3a1d1d;border-color:#5a2a2a;color:#ff9b9b}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .row{display:flex;gap:9px;align-items:center;margin-bottom:9px}
+  .row label{flex:0 0 96px;color:var(--dim)}
+  .row .val{flex:0 0 58px;text-align:right;color:var(--accent);
+            font-variant-numeric:tabular-nums}
+  .row input[type=text],.row input[type=number],.row select{flex:1;min-width:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  /* 预览区限高：字号变大后给内容让位，图仍可按比例缩放 */
+  #stage{position:relative;background:#000;border-radius:8px;overflow:hidden;
+         border:1px solid var(--line);height:min(46vh,440px);min-height:240px;
+         display:flex;align-items:center;justify-content:center}
+  #stage img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;
+             object-fit:contain;user-select:none}
+  #overlayBox{position:absolute;border:2px solid #3ecf8e;background:rgba(62,207,142,.12);
+              pointer-events:none;display:none}
+  .ab{position:relative;overflow:hidden;max-width:100%;max-height:100%}
+  .ab .layer{position:absolute;inset:0;overflow:hidden}
+  .ab .layer img{width:100%;height:100%;object-fit:contain}
+  .ab .handle{position:absolute;top:0;bottom:0;width:2px;background:#fff;
+              cursor:ew-resize;box-shadow:0 0 6px rgba(0,0,0,.8)}
+  .ab .handle::after{content:"⇔";position:absolute;top:50%;left:50%;
+        transform:translate(-50%,-50%);background:#fff;color:#111;
+        width:26px;height:26px;border-radius:50%;display:flex;
+        align-items:center;justify-content:center;font-size:12px}
+  .metrics{display:grid;gap:8px}
+  .metric{border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+          background:#12151b}
+  .metric .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .metric .name{color:var(--dim);font-size:var(--fs-sm)}
+  .metric .v{font-variant-numeric:tabular-nums;font-weight:600}
+  .metric.ok{border-color:#1e5a3f} .metric.ok .v{color:var(--ok)}
+  .metric.bad{border-color:#5a2020} .metric.bad .v{color:var(--bad)}
+  .metric.na .v{color:var(--dim)}
+  .metric .note{color:var(--dim);font-size:var(--fs-xs);margin-top:4px;line-height:1.45}
+  #log{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
+       padding:9px;height:172px;overflow:auto;
+       font:var(--fs-xs)/1.5 ui-monospace,Menlo,monospace;
+       white-space:pre-wrap;color:#b8c0cc}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;
+         font-size:var(--fs-xs);border:1px solid var(--line)}
+  .badge.running{color:var(--warn);border-color:#5c4a1e}
+  .badge.done{color:var(--ok);border-color:#1e5a3f}
+  .badge.failed{color:var(--bad);border-color:#5a2020}
+  .badge.stopped{color:var(--dim)}
+  .hint{color:var(--dim);font-size:var(--fs-sm);line-height:1.55;margin-top:6px}
+  .bar{height:4px;background:#12151b;border-radius:2px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;background:var(--accent);width:0;transition:.3s}
+  .tabs{display:flex;gap:6px;margin-bottom:10px}
+  .tabs button{flex:1;padding:7px 4px;font-size:var(--fs-sm)}
+  .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .spacer{flex:1}
+  a{color:var(--accent)}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:var(--fs-xs)}
+
+  /* ---------- 参数/指标帮助气泡（点 ? 展开） ---------- */
+  .qh{flex:0 0 auto;width:18px;height:18px;padding:0;margin-left:3px;
+      border-radius:50%;border:1px solid var(--line);background:#12151b;
+      color:var(--dim);font-size:11px;line-height:1;font-weight:600;
+      display:inline-flex;align-items:center;justify-content:center;
+      cursor:pointer;user-select:none;vertical-align:middle}
+  .qh:hover{border-color:var(--accent);color:var(--accent)}
+  .qh.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .row label{display:flex;align-items:center;gap:2px}
+  .metric .name .qh{margin-left:4px}
+
+  /* 帮助气泡：统一浮层，挂 body + fixed，**不占文档流、不改页面布局** */
+  #tip{position:fixed;display:none;z-index:9999;width:330px;
+       padding:11px 13px;border-radius:8px;border:1px solid #24303f;
+       background:#0f1a26;color:#c6d2e2;font-size:13px;line-height:1.68;
+       box-shadow:0 10px 32px rgba(0,0,0,.6)}
+  #tip.show{display:block}
+  #tip .ht{color:var(--accent);font-weight:600;display:block;margin-bottom:5px;
+           font-size:13.5px}
+  #tip .hr{display:flex;gap:6px;margin-top:4px}
+  #tip .hr b{flex:0 0 74px;color:var(--ok);font-weight:600;line-height:1.45}
+  #tip .hr em{flex:0 0 74px;color:var(--bad);font-style:normal;font-weight:600;
+              line-height:1.45}
+  #tip .tt{margin-top:7px;padding-top:6px;border-top:1px solid #24303f}
+  #tip .foot{margin-top:7px;padding-top:6px;border-top:1px solid #24303f;
+             color:var(--dim);font-size:12px}
+  #tip code{background:#182431;border-radius:3px;padding:0 3px;
+            font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9fc7ff}
+</style>
+</head>
+<body>
+<header>
+  <h1>去水印调参台</h1>
+  <span class="sub" id="hdrSub">未载入视频</span>
+  <span class="spacer"></span>
+  <span class="sub" id="devInfo"></span>
+</header>
+
+<div class="wrap">
+  <div class="left">
+    <div class="card">
+      <h2>1 · 载入视频</h2>
+      <div class="row">
+        <label>视频路径</label>
+        <input type="text" id="videoPath" placeholder="例如 demo/weibo-261021.mp4">
+        <button id="btnOpen">载入</button>
+      </div>
+      <div class="hint" id="videoMeta">载入后可拖拽框选水印区域。</div>
+    </div>
+
+    <div class="card">
+      <h2>2 · 框选水印区域（在图上拖拽，或改数值）</h2>
+      <div class="grid4">
+        <div><label class="hint">X</label><input type="number" id="bX" value="0"></div>
+        <div><label class="hint">Y</label><input type="number" id="bY" value="0"></div>
+        <div><label class="hint">宽</label><input type="number" id="bW" value="0"></div>
+        <div><label class="hint">高</label><input type="number" id="bH" value="0"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnMask" class="primary">重建 mask</button>
+        <button id="btnAutoTh">按背景自动定阈值</button>
+      </div>
+      <div class="hint" id="maskInfo">—</div>
+    </div>
+
+    <div class="card">
+      <h2>3 · 预览（单帧秒级）</h2>
+      <div class="tabs">
+        <button class="on" data-mode="clean">成片</button>
+        <button data-mode="ab">A/B 对比</button>
+        <button data-mode="compare">三联 + 差值</button>
+      </div>
+      <div id="stage">
+        <div class="ab" id="abBox" style="display:none">
+          <img id="abSrc">
+          <div class="layer" id="abLayer"><img id="abClean"></div>
+          <div class="handle" id="abHandle" style="left:50%"></div>
+        </div>
+        <img id="mainImg" style="display:none">
+        <span class="hint" id="stageHint">载入视频后点「预览」</span>
+        <div id="overlayBox"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label>帧号</label>
+        <input type="range" id="frameSlider" min="0" max="0" value="0" style="flex:1">
+        <input type="number" id="frameNum" value="0" style="flex:0 0 84px">
+      </div>
+      <div class="row">
+        <button id="btnPreview" class="primary">预览这一帧</button>
+        <button id="btnCropToggle">放大水印区</button>
+        <span class="spacer"></span>
+        <span class="hint" id="prevInfo"></span>
+      </div>
+      <div class="hint" id="prevTicker"></div>
+    </div>
+
+    <div class="card">
+      <h2>4 · 全片渲染</h2>
+      <div class="row">
+        <button id="btnRender" class="primary">开始全片渲染</button>
+        <button id="btnStop" class="danger">停止</button>
+        <span class="spacer"></span>
+        <span id="jobBadge" class="badge stopped">无任务</span>
+      </div>
+      <div class="bar"><i id="jobBar"></i></div>
+      <div id="log">（渲染日志会出现在这里）</div>
+      <div class="hint" id="outLink"></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <h2>参数</h2>
+      <div class="row">
+        <label>mask 策略<button class="qh" data-help="strategy" title="说明">?</button></label>
+        <select id="pStrategy">
+          <option value="card">全卡片（亮背景/高动态）</option>
+          <option value="sparse">稀疏（暗背景）</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>白字阈值<button class="qh" data-help="white_th" title="说明">?</button></label>
+        <input type="range" id="pWhiteTh" min="120" max="250" value="168">
+        <span class="val" id="vWhiteTh">168</span>
+      </div>
+      <div class="row">
+        <label>膨胀<button class="qh" data-help="grow" title="说明">?</button></label>
+        <input type="range" id="pGrow" min="1" max="41" step="2" value="21">
+        <span class="val" id="vGrow">21</span>
+      </div>
+      <div class="row">
+        <label>修补视野<button class="qh" data-help="pad" title="说明">?</button></label>
+        <input type="range" id="pPad" min="4" max="40" value="10">
+        <span class="val" id="vPad">10</span>
+      </div>
+      <div class="row">
+        <label>设备</label>
+        <select id="pDevice">
+          <option value="auto">auto</option>
+          <option value="mps">mps</option>
+          <option value="cpu">cpu</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>合成方式<button class="qh" data-help="blend" title="说明">?</button></label>
+        <select id="pBlend">
+          <option value="mask">按 mask 合成（推荐）</option>
+          <option value="patch">整块回贴（原版）</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>体积/画质<button class="qh" data-help="crf" title="说明">?</button></label>
+        <input type="range" id="pCrf" min="12" max="28" value="17">
+        <span class="val" id="vCrf">17</span>
+      </div>
+      <div class="hint">
+        选「全卡片」策略时，<b>合成方式</b> 两个选项效果一样；选「稀疏」时请保持
+        「按 mask 合成」，否则水印周围的好画面会被一起糊掉。
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label style="flex:0 0 auto">
+          <input type="checkbox" id="pFastMask" checked> 快速建 mask
+        </label>
+      </div>
+      <div class="hint">
+        勾选 = 单次解码批量抽帧（约 3 秒）；取消 = 走脚本（几十秒，
+        但会向窗口外探测，确认没有水印漏在框外）。
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>验收指标<button class="qh" data-help="metric_all" title="说明">?</button></h2>
+      <div class="metrics" id="metrics">
+        <div class="hint">预览后显示。指标针对当前这一帧，用来判断效果好不好；
+          正式交付前建议再过一遍全片。</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>mask 预览<button class="qh" data-help="card_metric" title="说明">?</button></h2>
+      <div id="maskBox" class="hint">重建 mask 后显示。红色 = 会被抹掉重画的部分。</div>
+    </div>
+  </div>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------
+ * 参数说明（点 ? 展开）
+ * 面向使用者：只讲「变了会看到什么」，不出现算法/代码细节。
+ * 结构：一句话定位 / 调大看到什么 / 调小看到什么 / 怎么选
+ * ------------------------------------------------------------------ */
+const PARAM_HELP = {
+  white_th: {
+    title: "白字阈值",
+    what: `决定「水印有多大范围会被抹掉」。把你认为够白的部分算进来，
+           比它暗的算背景、保持原样。`,
+    hi: "抹得少 → 水印边缘会留下一圈淡淡的白色痕迹。",
+    lo: "抹得多 → 水印外面本来好的画面也被一起重画，那块容易发糊。",
+    tips: [
+      "先点上面的「按背景自动定阈值」，它会看画面明暗给个起点。",
+      "画面越亮，这个值要给得越高；亮背景片沿用默认值会把整块背景都抹掉。",
+      "判断标准就一条：mask 预览里的红色刚好盖住水印，不多也不少。",
+    ],
+  },
+  grow: {
+    title: "膨胀",
+    what: `在抹掉的范围外再多盖一圈，专门用来吃掉水印边缘那层
+           半透明的浅色过渡（那圈最容易残留）。`,
+    hi: "盖得更保险，但会把水印周围更多好画面一起重画，细节可能变钝。",
+    lo: "只盖住字本身，水印外圈的淡白边会留下来，成片能看到残影。",
+    tips: [
+      "默认 21 一般够用，多数片不用动。",
+      "预览里水印四周还有淡白边 → 加到 25 或 31。",
+      "水印旁边有细字或细纹理 → 别超过 25，宁可去调白字阈值。",
+    ],
+  },
+  pad: {
+    title: "pad（修补视野）",
+    what: `决定修补时「能参考多大范围的周边画面」。
+           给得越大，它越能看清周围是什么，续出来的颜色和纹理越自然。`,
+    hi: "接得更自然（渐变、条纹类背景尤其明显），但每帧算得慢一些。",
+    lo: "看不清周边，容易凭空编出一块色块或亮斑，跟周围接不上。",
+    tips: [
+      "默认 10 是稳妥值，大多数片不用改。",
+      "修补区跟周围接不上、有明显交界线 → 试 14~16。",
+      "一次别加太多，加多了只是变慢，效果不一定更好。",
+    ],
+  },
+  crf: {
+    title: "体积 / 画质",
+    what: `只影响最后存出来的成片：数字越小画质越好、文件越大。
+           跟去水印效果无关，也不会改变预览画面。`,
+    upLabel: "数字调大 →",
+    dnLabel: "数字调小 →",
+    hi: "文件更小便于传输，但画质下降，暗部容易出现色带，修复处的小痕迹也更明显。",
+    lo: "画质更好，文件明显变大。",
+    tips: [
+      "默认 17 肉眼看不出损失，直接交付就行。",
+      "想省体积：18~19 一般够用，体积能小约三成而看不出差别。",
+      "它只在「全片渲染」时生效，改一次就得重渲一遍，所以最后再定。",
+    ],
+  },
+  strategy: {
+    title: "mask 策略",
+    what: `决定「抹多大一块」。<b>稀疏</b>只抹水印笔画本身；
+           <b>全卡片</b>把整张水印卡片（含卡片底色）一起重画，更彻底。`,
+    hi: "",
+    lo: "",
+    tips: [
+      "背景亮、或背景本身在动 → 选全卡片，残留才去得干净。",
+      "背景暗且细节多 → 选稀疏，能保住水印周围更多真实画面。",
+      "拿不准就看下面的四个指标，或直接两种各预览一次对比。",
+    ],
+  },
+  blend: {
+    title: "合成方式",
+    what: `决定「抹完之后怎么贴回去」。<b>按 mask 合成</b>只替换标记为水印的部分，
+           其余像素原样保留；<b>整块回贴</b>会把水印周围一整块都换成重画结果。`,
+    hi: "",
+    lo: "",
+    tips: [
+      "选「全卡片」策略时两者没区别。",
+      "选「稀疏」策略时必须用「按 mask 合成」，否则水印周围的好画面会被一起糊掉。",
+      "结论：保持默认就好。",
+    ],
+  },
+  metric_all: {
+    title: "四个指标怎么用",
+    what: `对应「干净、不发灰、不漏缝、不发糊」四件事。
+           每张卡右上角的 <code>?</code> 有单项说明。四项全绿基本就可以出片了。`,
+    tips: [
+      "① 笔画残留降幅 —— 水印是不是真被抹干净了（最重要）。",
+      "② 修复处最亮值 —— 白色字芯是不是还在。",
+      "③ 边界梯度比 —— 修补区和周围有没有明显交界线。",
+      "④ 纹理匹配 —— 修补处有没有发糊、有没有多出噪点。",
+      "指标是抽当前这一帧算的，用于快速判断；正式交付前仍建议全片过一遍。",
+    ],
+  },
+  card_metric: {
+    title: "mask 预览",
+    what: `红色就是会被重画的部分，可以直接用眼睛判断范围对不对。`,
+    tips: [
+      "红色刚好盖住水印、没有大面积空白 → 合适。",
+      "红色断断续续、中间有空洞 → 白字阈值偏低或膨胀不够。",
+      "红色盖到了水印以外的好画面 → 把白字阈值调高。",
+      "页面同时给出「稀疏」和「全卡片」两个面积，方便对比差别有多大。",
+    ],
+  },
+};
+
+/* 指标的补充解释（浮层里显示） */
+const METRIC_HELP = {
+  glyph_drop: {
+    what: `水印最扎眼的就是那些白字。这项衡量白字被削掉了多少 ——
+           100% 表示完全看不出原来有水印字。`,
+    read: "达到 90% 就算干净。低于 90% 说明还能看到字的影子，去查白字阈值和膨胀（边缘没盖全）。",
+  },
+  region_max: {
+    what: `看水印原来最亮的那块地方，现在是不是已经回到背景的正常亮度。
+           字没抹净时这里会一直很亮。`,
+    read: "这项显示通过就说明没有残留的白字芯。如果修复处还是一个明显亮点，说明字还在。",
+  },
+  edge_ratio: {
+    what: `看修补区和水印周围有没有接不上 —— 也就是肉眼常说的「一块补丁」、
+           「一条硬线」。`,
+    read: "越低越自然。这项不通过通常说明抹的范围选小了（背景亮却用了稀疏策略），换成全卡片一般能解决。",
+  },
+  sigma_ratio: {
+    what: `看修补处的颗粒感和周围匹不匹配。数值偏低 = 那块被抹得太光滑、发糊；
+           偏高 = 那块凭空多了噪点，看着脏。`,
+    read: "这项在合理区间内就说明纹理自然。前期修完肉眼觉得「那块发雾」而这项也偏低，通常是抹的范围过大或需要补纹理。",
+  },
+  card: {
+    what: `全卡片模式下会被重画的像素数量。它一般比稀疏模式多——多出来的部分
+           就是水印卡片的底色区域。`,
+    read: "两个数字差得太小，说明稀疏范围已经把整个水印框占满了，白字阈值可能偏低。",
+  },
+};
+
+const state = {
+  video: "", info: null, maskPath: "", maskB64: null,
+  frame: 0, mode: "clean", cropRoi: false, taskId: "",
+  logOffset: 0, dragging: false, dragStart: null,
+  openHelp: new Set(),
+};
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function toast(msg) { $("stageHint").textContent = msg; }
+
+/* ---------- 载入 ---------- */
+$("btnOpen").onclick = async () => {
+  const video = $("videoPath").value.trim();
+  if (!video) return toast("请填视频路径");
+  try {
+    toast("载入中…");
+    const d = await post("/wm/api/open", { video });
+    state.video = d.video.path;
+    state.info = d.video;
+    $("bX").value = d.bbox[0]; $("bY").value = d.bbox[1];
+    $("bW").value = d.bbox[2]; $("bH").value = d.bbox[3];
+    const slider = $("frameSlider");
+    slider.min = 0; slider.max = Math.max(0, d.video.frames - 1);
+    slider.value = 0; $("frameNum").value = 0; state.frame = 0;
+    $("mainImg").src = "data:image/jpeg;base64," + d.thumb;
+    $("mainImg").style.display = "block";
+    $("stageHint").style.display = "none";
+    $("hdrSub").textContent = `${d.video.width}×${d.video.height} · ${d.video.fps}fps · ${d.video.frames} 帧 · ${d.video.duration.toFixed(1)}s`;
+    $("videoMeta").textContent = `工作区：${d.workspace}`;
+    drawOverlay();
+    toast("已载入，可拖拽框选或直接预览");
+  } catch (e) { toast("载入失败：" + e.message); }
+};
+
+/* ---------- 框选 ---------- */
+function bbox() {
+  return ["bX","bY","bW","bH"].map(id => parseInt($(id).value) || 0);
+}
+function drawOverlay() {
+  const img = $("mainImg");
+  if (!img.src || !state.info || img.style.display === "none") return;
+  const [x, y, w, h] = bbox();
+  const rect = img.getBoundingClientRect();
+  const stageRect = $("stage").getBoundingClientRect();
+  const scale = state.info.width ? rect.width / state.info.width : 1;
+  const box = $("overlayBox");
+  box.style.display = "block";
+  box.style.left = (rect.left - stageRect.left + x * scale) + "px";
+  box.style.top = (rect.top - stageRect.top + y * scale) + "px";
+  box.style.width = (w * scale) + "px";
+  box.style.height = (h * scale) + "px";
+}
+["bX","bY","bW","bH"].forEach(id => $(id).oninput = drawOverlay);
+
+$("stage").addEventListener("mousedown", (ev) => {
+  if (!state.info || state.mode !== "clean") return;
+  const img = $("mainImg");
+  if (img.style.display === "none") return;
+  // 用画面缩略图的自然尺寸免得缩略图比例不一致
+  state.dragging = true;
+  const rect = img.getBoundingClientRect();
+  state.dragStart = { x: ev.clientX - rect.left, y: ev.clientY - rect.top, rect };
+  ev.preventDefault();
+});
+window.addEventListener("mousemove", (ev) => {
+  if (!state.dragging || !state.dragStart) return;
+  const { rect } = state.dragStart;
+  const [x0, y0, w0, h0] = bbox();
+  const scale = state.info.width / rect.width;
+  let cx = (ev.clientX - rect.left) * scale;
+  let cy = (ev.clientY - rect.top) * scale;
+  cx = Math.max(0, Math.min(state.info.width, cx));
+  cy = Math.max(0, Math.min(state.info.height, cy));
+  const sx = state.dragStart.x * scale, sy = state.dragStart.y * scale;
+  $("bX").value = Math.round(Math.min(sx, cx));
+  $("bY").value = Math.round(Math.min(sy, cy));
+  $("bW").value = Math.round(Math.abs(cx - sx));
+  $("bH").value = Math.round(Math.abs(cy - sy));
+  drawOverlay();
+});
+window.addEventListener("mouseup", () => { state.dragging = false; });
+
+/* ---------- mask ---------- */
+$("btnMask").onclick = async () => {
+  if (!state.video) return toast("先载入视频");
+  const t0 = performance.now();
+  let tick = null;
+  try {
+    $("btnMask").disabled = true;
+    $("maskInfo").textContent = "构建 mask 中…";
+    // 实时走秒：本地路径约 3s，脚本路径（窗口外探测）可能要几十秒，
+    // 不给计时用户会以为卡死（实测踩过：40s 无反馈）
+    tick = setInterval(() => {
+      $("maskInfo").textContent =
+        `构建 mask 中… ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    }, 100);
+    const d = await post("/wm/api/mask", {
+      video: state.video, bbox: bbox(),
+      white_th: parseInt($("pWhiteTh").value),
+      grow: parseInt($("pGrow").value),
+      strategy: $("pStrategy").value,
+      fast: !$("pFastMask") || $("pFastMask").checked,
+    });
+    clearInterval(tick); tick = null;
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    if (!d.ok) {
+      $("maskInfo").innerHTML = `<span style="color:#ff6b6b">❌ ${d.error || "失败"}</span>`
+        + (d.warnings.length ? "<br>" + d.warnings.map(w=>"· "+w).join("<br>") : "");
+      state.maskPath = ""; return;
+    }
+    state.maskPath = d.mask_path;
+    const b = d.bbox || [];
+    $("maskInfo").innerHTML =
+      `✅ 稀疏 ${d.sparse_px}px` + (d.card_px != null ? ` · 全卡片 ${d.card_px}px` : "")
+      + ` · 用时 ${secs}s`
+      + `<br>内容范围 x ${b[0]}..${b[1]} y ${b[2]}..${b[3]}`
+      + (d.auto && d.auto.note ? `<br><span class="hint">${d.auto.note}</span>` : "")
+      + (d.warnings.length ? `<br><span style="color:#ffb648">⚠ ${d.warnings.join("；")}</span>` : "")
+      + (d.suggestion ? `<br><span style="color:#ffb648">建议窗口 ${d.suggestion.join(" / ")}</span>` : "");
+    if (d.overlay) {
+      $("maskBox").innerHTML = "";
+      const im = new Image();
+      im.src = "data:image/jpeg;base64," + d.overlay;
+      im.style.width = "100%"; im.style.borderRadius = "6px";
+      $("maskBox").appendChild(im);
+    }
+  } catch (e) {
+    $("maskInfo").innerHTML = `<span style="color:#ff6b6b">❌ ${e.message}</span>`;
+  } finally {
+    if (tick) clearInterval(tick);
+    $("btnMask").disabled = false;
+  }
+};
+
+$("btnAutoTh").onclick = async () => {
+  if (!state.video) return toast("先载入视频");
+  try {
+    $("btnAutoTh").disabled = true;
+    const d = await post("/wm/api/mask", {
+      video: state.video, bbox: bbox(), white_th: parseInt($("pWhiteTh").value),
+      grow: parseInt($("pGrow").value), strategy: $("pStrategy").value,
+      auto_white_th: true, frames: 40,
+    });
+    if (d.auto && d.auto.suggest) {
+      $("pWhiteTh").value = d.auto.suggest; $("vWhiteTh").textContent = d.auto.suggest;
+      $("maskInfo").innerHTML =
+        `背景中位亮度 <b>${d.auto.bg_median}</b> → 建议阈值 <b>${d.auto.suggest}</b>`
+        + `<br><span class="hint">${d.auto.note}</span>`;
+    }
+  } catch (e) { $("maskInfo").textContent = "自动定阈值失败：" + e.message; }
+  finally { $("btnAutoTh").disabled = false; }
+};
+
+/* ---------- 预览 ---------- */
+$("frameSlider").oninput = () => {
+  state.frame = parseInt($("frameSlider").value);
+  $("frameNum").value = state.frame;
+};
+$("frameNum").onchange = () => {
+  state.frame = Math.max(0, Math.min(state.info ? state.info.frames - 1 : 0,
+                                     parseInt($("frameNum").value) || 0));
+  $("frameSlider").value = state.frame;
+};
+
+document.querySelectorAll(".tabs button").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); state.mode = b.dataset.mode;
+    if (state.mode !== "clean") { $("mainImg").style.display = "none"; }
+    if (state.mode === "ab") { $("abBox").style.display = "block"; }
+    else { $("abBox").style.display = "none"; }
+    $("overlayBox").style.display = "none";
+  };
+});
+
+$("btnCropToggle").onclick = () => {
+  state.cropRoi = !state.cropRoi;
+  $("btnCropToggle").textContent = state.cropRoi ? "看整帧" : "放大水印区";
+};
+
+$("btnPreview").onclick = async () => {
+  if (!state.video) return toast("先载入视频");
+  if (!state.maskPath) return toast("先重建 mask");
+  const body = {
+    video: state.video, bbox: bbox(), frame_idx: state.frame,
+    mask_path: state.maskPath, strategy: $("pStrategy").value,
+    pad: parseInt($("pPad").value), device: $("pDevice").value,
+    blend_mode: $("pBlend").value, crop_roi: state.cropRoi,
+    target_width: 1300,
+  };
+  try {
+    $("btnPreview").disabled = true;
+    $("prevInfo").textContent = "推理中…";
+    const tP = performance.now();
+    const tickP = setInterval(() => {
+      $("prevTicker").textContent = `推理中… ${((performance.now()-tP)/1000).toFixed(1)}s`;
+    }, 100);
+    try {
+    if (state.mode === "compare") {
+      const d = await post("/wm/api/compare", {
+        video: body.video, bbox: body.bbox, frame_idx: body.frame_idx,
+        mask_path: body.mask_path, strategy: body.strategy, pad: body.pad,
+        device: body.device, gain: 6,
+      });
+      $("mainImg").src = "data:image/jpeg;base64," + d.img;
+      $("mainImg").style.display = "block";
+      $("abBox").style.display = "none";
+      renderMetrics(d.metrics);
+      $("prevInfo").textContent = `${d.infer_ms}ms · 帧 ${state.frame}`;
+    } else {
+      const d = await post("/wm/api/preview", body);
+      const src = "data:image/jpeg;base64," + d.src_img;
+      const cln = "data:image/jpeg;base64," + d.clean_img;
+      if (state.mode === "ab") {
+        $("abSrc").src = src; $("abClean").src = cln;
+        $("abBox").style.display = "block";
+        $("mainImg").style.display = "none";
+        $("abLayer").style.clipPath = "inset(0 0 0 50%)";
+        $("abHandle").style.left = "50%";
+      } else {
+        $("mainImg").src = cln;
+        $("mainImg").style.display = "block";
+        $("abBox").style.display = "none";
+        drawOverlay();
+      }
+      renderMetrics(d.metrics);
+      $("devInfo").textContent = `device: ${d.device}`;
+      $("prevInfo").textContent =
+        `${d.infer_ms}ms 推理 / ${d.total_ms}ms 总 · mask ${d.mask_px}px · 帧 ${d.frame_idx}`;
+    }
+    } finally {
+      clearInterval(tickP);
+      $("prevTicker").textContent = "";
+    }
+  } catch (e) { $("prevInfo").textContent = "❌ " + e.message; }
+  finally { $("btnPreview").disabled = false; }
+};
+
+function renderMetrics(rep) {
+  const box = $("metrics");
+  if (!rep || !rep.items) {
+    box.innerHTML = '<div class="hint">这一帧没有指标（缺 mask）</div>'; return;
+  }
+  box.innerHTML = rep.items.map((it, i) => {
+    const cls = it.ok === true ? "ok" : (it.ok === false ? "bad" : "na");
+    const mark = it.ok === true ? "✅" : (it.ok === false ? "❌" : "—");
+    const v = it.value == null ? "—" : `${it.value}${it.unit}`;
+    const q = METRIC_HELP[it.key]
+      ? `<button class="qh" data-metric="${it.key}" data-midx="${i}"
+                title="说明">?</button>` : "";
+    return `<div class="metric ${cls}">
+      <div class="top"><span class="name">${mark} ${it.label}${q}</span>
+      <span class="v">${v}</span></div>
+      <div class="note">目标 ${it.target}${it.note ? " · " + it.note : ""}</div>
+    </div>`;
+  }).join("") +
+  `<div class="hint">通过 ${rep.passed}/${rep.total} 项</div>`;
+}
+
+/* ------------------------------------------------------------------
+ * 帮助气泡：参数和指标**统一用 #tip 浮层**
+ * —— 浮层挂在 body + position:fixed，不占文档流，
+ *    所以点开/收起都不会让页面布局跳动。
+ * ------------------------------------------------------------------ */
+
+function helpHTML(h, foot) {
+  const rows = [];
+  if (h.what) rows.push(`<span class="ht">${h.title}</span>${h.what}`);
+  const up = h.upLabel || "调大会 →", dn = h.dnLabel || "调小会 →";
+  if (h.hi) rows.push(`<div class="hr"><b>${up}</b><span>${h.hi}</span></div>`);
+  if (h.lo) rows.push(`<div class="hr"><em>${dn}</em><span>${h.lo}</span></div>`);
+  if (h.tips && h.tips.length) {
+    rows.push(`<div class="tt">` + h.tips.map(t => `· ${t}`).join("<br>") + `</div>`);
+  }
+  if (foot) rows.push(`<div class="foot"><b>怎么读：</b>${foot}</div>`);
+  return rows.join("");
+}
+
+/* 通用气泡定位：优先贴锚点右侧（参数在右栏，往左弹会盖住预览），
+   右栏放不下就翻到左侧，再不行就上下对齐 */
+function placeTip(anchor) {
+  const tip = $("tip");
+  tip.classList.add("show");
+  const r = anchor.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const pad = 8;
+
+  // 右侧空间够 → 贴右边；否则贴左边
+  let left = r.right + pad;
+  if (left + tw > window.innerWidth - pad) {
+    left = r.left - tw - pad;
+  }
+  // 左右都不行 → 居中并夹在窗口内
+  if (left < pad) {
+    left = Math.max(pad, Math.min(r.left - tw / 2, window.innerWidth - tw - pad));
+  }
+
+  // 垂直：默认与锚点顶部对齐，超出则向上顶
+  let top = r.top - 2;
+  if (top + th > window.innerHeight - pad) {
+    top = window.innerHeight - th - pad;
+  }
+  if (top < pad) top = pad;
+
+  tip.style.left = Math.round(left) + "px";
+  tip.style.top = Math.round(top) + "px";
+}
+
+function showParamTip(key, anchor) {
+  const h = PARAM_HELP[key];
+  if (!h) return;
+  $("tip").innerHTML = helpHTML(h);
+  placeTip(anchor);
+  state.tipKey = "help:" + key;
+  anchor.classList.add("on");
+}
+
+function showMetricTip(key, anchor, id) {
+  const h = METRIC_HELP[key];
+  if (!h) return;
+  $("tip").innerHTML = helpHTML(
+    { title: keyTitle(key), what: h.what }, h.read
+  );
+  placeTip(anchor);
+  state.tipKey = id || key;
+  anchor.classList.add("on");
+}
+
+function keyTitle(k) {
+  return { glyph_drop: "① 水印抹干净了吗",
+           region_max: "② 白字是不是还在",
+           edge_ratio: "③ 有没有留下补丁线",
+           sigma_ratio: "④ 修补处糊不糊",
+           card: "抹掉的范围有多大" }[k] || k;
+}
+
+function hideTip() {
+  $("tip").classList.remove("show");
+  document.querySelectorAll(".qh.on").forEach(b => b.classList.remove("on"));
+  state.tipKey = null;
+}
+
+/* 统一事件委托 */
+document.addEventListener("click", (e) => {
+  const qh = e.target.closest(".qh");
+  if (qh) {
+    e.stopPropagation();
+    if (qh.dataset.metric) {
+      const id = qh.dataset.metric + "#" + qh.dataset.midx;
+      if (state.tipKey === id) hideTip();
+      else { hideTip(); showMetricTip(qh.dataset.metric, qh, id); }
+    } else if (qh.dataset.help) {
+      const id = "help:" + qh.dataset.help;
+      if (state.tipKey === id) hideTip();
+      else { hideTip(); showParamTip(qh.dataset.help, qh); }
+    }
+    return;
+  }
+  // 点其它地方收起指标浮层
+  if (!e.target.closest("#tip")) hideTip();
+});
+
+window.addEventListener("resize", hideTip);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideTip();
+});
+
+/* A/B 拖动 */
+const handle = $("abHandle"), layer = $("abLayer");
+let abDrag = false;
+handle.addEventListener("mousedown", e => { abDrag = true; e.preventDefault(); });
+window.addEventListener("mousemove", e => {
+  if (!abDrag) return;
+  const r = $("abBox").getBoundingClientRect();
+  let p = ((e.clientX - r.left) / r.width) * 100;
+  p = Math.max(0, Math.min(100, p));
+  handle.style.left = p + "%";
+  layer.style.clipPath = `inset(0 0 0 ${p}%)`;
+});
+
+/* ---------- 渲染任务 ---------- */
+$("btnRender").onclick = async () => {
+  if (!state.video) return toast("先载入视频");
+  if (!state.maskPath) return toast("先重建 mask");
+  try {
+    $("btnRender").disabled = true;
+    const d = await post("/wm/api/job", {
+      video: state.video, bbox: bbox(), mask_path: state.maskPath,
+      strategy: $("pStrategy").value, pad: parseInt($("pPad").value),
+      crf: parseInt($("pCrf").value), device: $("pDevice").value,
+      keyframe_every: 1,
+    });
+    state.taskId = d.task_id; state.logOffset = 0;
+    $("log").textContent = "";
+    $("outLink").textContent = "";
+    $("jobBadge").textContent = "运行中"; $("jobBadge").className = "badge running";
+    pollJob();
+  } catch (e) { toast("启动失败：" + e.message); $("btnRender").disabled = false; }
+};
+
+$("btnStop").onclick = async () => {
+  if (!state.taskId) return;
+  try { await post(`/wm/api/job/${state.taskId}/stop`, {}); pollJob(); }
+  catch (e) { toast("停止失败：" + e.message); }
+};
+
+let pollTimer = null;
+async function pollJob() {
+  if (!state.taskId) return;
+  clearTimeout(pollTimer);
+  try {
+    const d = await fetch(`/wm/api/job/${state.taskId}/log?offset=${state.logOffset}`).then(r => r.json());
+    if (d.text) {
+      const el = $("log");
+      el.textContent += d.text;
+      el.scrollTop = el.scrollHeight;
+    }
+    if (typeof d.offset === "number") state.logOffset = d.offset;
+
+    const j = await fetch(`/wm/api/job/${state.taskId}`).then(r => r.json());
+    const b = $("jobBadge");
+    b.textContent = j.status; b.className = "badge " + j.status;
+    if (j.stages && j.stages.length) {
+      const pct = d.progress
+        ? Math.min(100, (d.progress.frames / Math.max(1, state.info.frames)) * 100)
+        : 0;
+      $("jobBar").style.width = (j.status === "done" ? 100 : pct) + "%";
+    }
+    if (j.status === "running") {
+      $("btnRender").disabled = true;
+      pollTimer = setTimeout(pollJob, 1500);
+    } else {
+      $("btnRender").disabled = false;
+      if (j.status === "done" && j.out_exists) {
+        $("outLink").innerHTML = `成片：<a href="/wm/api/job/${j.task_id}/file" target="_blank">${j.out_video}</a> (${j.out_size_mb} MB)`;
+      } else if (j.message) {
+        $("outLink").textContent = j.message;
+      }
+    }
+  } catch (e) {
+    pollTimer = setTimeout(pollJob, 3000);
+  }
+}
+
+/* 滑块数值同步 */
+[["pWhiteTh","vWhiteTh"],["pGrow","vGrow"],["pPad","vPad"],["pCrf","vCrf"]]
+  .forEach(([a,b]) => { $(a).oninput = () => { $(b).textContent = $(a).value; }; });
+
+window.addEventListener("resize", drawOverlay);
+btnsInit();
+function btnsInit() {
+  // 切到 A/B 时初始化裁剪位置
+  $("abLayer").style.clipPath = "inset(0 0 0 50%)";
+}
+</script>
+</body>
+</html>

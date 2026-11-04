@@ -1,0 +1,4 @@
+# 算力机服务依赖（Python 3.10+）
+# torch 单独装：体积大且要匹配 CUDA 版本，见 README 的安装命令。
+Django>=5.2,<6.0
+requests>=2.31

@@ -1,0 +1,27 @@
+services:
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # 容器内路径与宿主机不同，这里统一覆盖
+      WM_SCRIPTS_DIR: /srv/scripts
+      WORKSPACE_DIR: /srv/workspace
+      WORKER_DB_PATH: /srv/data/worker.sqlite3
+    volumes:
+      - ./scripts:/srv/scripts:ro # 修复脚本（只读，防止误改）
+      - ./workspace:/srv/workspace
+      - ./data:/srv/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # 单机单卡，不做水平扩展：多开会让本地 GPU 争抢显存
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

@@ -1,0 +1,69 @@
+/* 无痕匠 · 设计 token
+ *
+ * 概念「墨与纸」：工具应当是纸、墨、刻度，不炫技但经得起细看。
+ * 规则：页面里不写死任何色值，只用这里的变量。
+ * 改品牌色只需要改这一个文件。
+ */
+
+:root {
+  /* ── 墨：文字层级 ───────────────────────────── */
+  --ink-900: #121a17; /* 主文字，带一丝绿的黑，避免死板 */
+  --ink-700: #2c3633; /* 标题次强 */
+  --ink-600: #4c5754; /* 正文、次要文字 */
+  --ink-400: #8a938f; /* 辅助说明 */
+  --ink-300: #a8b0ac; /* 占位、禁用 */
+
+  /* ── 纸：面与线 ─────────────────────────────── */
+  --paper: #faf9f5; /* 页面底（米白，衬出白卡片） */
+  --surface: #ffffff; /* 卡片 */
+  --surface-sunken: #f7f6f1; /* 卡内凹陷块、说明条 */
+  --line: #e4e3dd; /* 描边、分割线 */
+  --line-soft: #f0efe9; /* 更弱的分割（表格行） */
+  --line-strong: #d3d1c7; /* 实线按钮描边 */
+
+  /* ── 品牌：深墨绿 ───────────────────────────── */
+  --brand: #0e5c4a;
+  --brand-hover: #0a4739;
+  --brand-wash: #eaf4f0;
+  --brand-ring: rgba(14, 92, 74, 0.16);
+
+  /* ── 语义：指标红绿（与品牌色拉开明度差，不会混） ── */
+  --ok: #12946a;
+  --ok-wash: #e8f7f0;
+  --bad: #d14b4b;
+  --bad-wash: #fcecec;
+  --warn: #bc7209;
+  --warn-wash: #fdf3e3;
+
+  /* ── 阴影：只用一层极轻的浮起 ──────────────── */
+  --shadow-card: 0 1px 2px rgba(18, 26, 23, 0.04), 0 6px 20px -8px rgba(18, 26, 23, 0.08);
+  --shadow-pop: 0 4px 12px rgba(18, 26, 23, 0.08), 0 12px 32px -8px rgba(18, 26, 23, 0.12);
+
+  /* ── 几何 ───────────────────────────────────── */
+  --r-card: 14px;
+  --r-ctl: 10px;
+  --r-tag: 6px;
+  --r-pill: 999px;
+
+  /* ── 间距（4 的倍数，只用这几档） ────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* ── 版式 ───────────────────────────────────── */
+  --page-w: 880px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+
+  /* ── 覆盖 Element Plus 主题，让它的 toast 也长在这套体系里 ── */
+  --el-color-primary: var(--brand);
+  --el-color-success: var(--ok);
+  --el-color-danger: var(--bad);
+  --el-border-radius-base: 8px;
+  --el-font-family: var(--font-sans);
+}

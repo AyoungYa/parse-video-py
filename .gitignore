@@ -157,7 +157,7 @@ cython_debug/
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-.idea/
+# 2026-11-04 豆豆要求：.idea 整个目录、.DS_Store、demo/ 全部入库，不再忽略。
 .vscode/
 
 # test files
@@ -168,3 +168,32 @@ uv.lock
 
 # codex
 .codex
+
+# wm-studio 工作区（渲染产物与 mask，不入库）
+wm_studio_workspace/
+
+# ---- 新服务 cloud_web / gpu_worker（独立部署单元，含各自的 .env 与本地库）----
+**/.env
+!**/.env.example
+# 服务目录用 uv 管理，锁文件必须入库（上面全局忽略 uv.lock，这里显式放行）
+!cloud_web/uv.lock
+!gpu_worker/uv.lock
+cloud_web/db.sqlite3
+cloud_web/staticfiles/
+cloud_web/media/
+cloud_web/frontend/node_modules/
+cloud_web/frontend/dist/
+cloud_web/deploy/certs/*
+!cloud_web/deploy/certs/.gitkeep
+gpu_worker/worker.sqlite3
+gpu_worker/workspace/
+gpu_worker/data/
+gpu_worker/scripts/
+node_modules/
+
+# demo/ 是本地素材区（1.7GB 视频成片，含多个超 100MB 文件）——豆豆 2026-11-04 拍板：不进远程仓库
+demo/
+*/.idea
+.idea/*
+*/.idea/*
+.DS_Store

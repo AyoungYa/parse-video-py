@@ -1,0 +1,79 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>无痕匠 · 算力节点 {{ settings.WORKER_ID }}</title>
+  <style>
+    :root { --line: rgba(0,0,0,.1); --muted: #5f5e5a; --brand: #0f6e56; }
+    body { margin: 0; font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #2c2c2a; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
+    h1 { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th { font-weight: 500; color: var(--muted); font-size: 12px; }
+    .ok { color: var(--brand); }
+    .bad { color: #a32d2d; }
+    .muted { color: var(--muted); }
+    code { background: #f1efe8; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    .kv { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 26px; font-size: 13px; }
+    .kv div { color: var(--muted); }
+    .kv b { color: #2c2c2a; font-weight: 500; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>算力节点 {{ settings.WORKER_ID }}</h1>
+  <p class="sub">本机不对外提供服务，只主动向云端领任务。权威状态在云端，此处仅作观测。</p>
+
+  <div class="kv">
+    <div>云端 <b>{{ settings.CLOUD_BASE_URL }}</b></div>
+    <div>设备 <b>{{ settings.TORCH_DEVICE }}</b></div>
+    <div>并发 <b>{{ settings.MAX_CONCURRENCY }}</b></div>
+    <div>脚本目录 <code>{{ settings.WM_SCRIPTS_DIR }}</code></div>
+  </div>
+
+  <h2 style="font-size:14px;font-weight:500;margin:0 0 10px">最近任务</h2>
+  {% if tasks %}
+  <table>
+    <tr>
+      <th>任务</th><th>状态</th><th>阶段</th><th>进度</th><th>时长</th><th>开始</th><th>结束</th>
+    </tr>
+    {% for t in tasks %}
+    <tr>
+      <td><code>{{ t.task_id|slice:":8" }}</code></td>
+      <td class="{% if t.status == 'succeeded' %}ok{% elif t.status == 'failed' %}bad{% endif %}">{{ t.get_status_display }}</td>
+      <td>{{ t.stage|default:"—" }}</td>
+      <td>{% widthratio t.progress 1 100 %}%</td>
+      <td>{{ t.duration_seconds|floatformat:0 }}s</td>
+      <td class="muted">{{ t.started_at|date:"m-d H:i:s" }}</td>
+      <td class="muted">{{ t.finished_at|date:"m-d H:i:s"|default:"—" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">还没有跑过任务。启动主循环：<code>python manage.py run_worker</code></p>
+  {% endif %}
+
+  <h2 style="font-size:14px;font-weight:500;margin:28px 0 10px">阶段日志（最近 20 条）</h2>
+  {% if logs %}
+  <table>
+    <tr><th>任务</th><th>阶段</th><th>退出码</th><th>耗时</th><th>时间</th></tr>
+    {% for l in logs %}
+    <tr>
+      <td><code>{{ l.task_id|slice:":8" }}</code></td>
+      <td>{{ l.stage }}</td>
+      <td class="{% if l.exit_code == 0 %}ok{% else %}bad{% endif %}">{{ l.exit_code }}</td>
+      <td>{{ l.elapsed_seconds|floatformat:1 }}s</td>
+      <td class="muted">{{ l.created_at|date:"m-d H:i:s" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">暂无记录。</p>
+  {% endif %}
+</div>
+</body>
+</html>
