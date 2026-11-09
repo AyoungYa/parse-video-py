@@ -104,17 +104,23 @@ class CloudClient:
         ).json()
 
     def fail(
-        self, task_id: str, error_code: str, error_message: str = "", retryable: bool = True
+        self,
+        task_id: str,
+        error_code: str,
+        error_message: str = "",
+        retryable: bool = True,
+        candidates: list | None = None,
     ) -> dict:
-        return self._post(
-            "fail",
-            {
-                "task_id": task_id,
-                "error_code": error_code[:64],
-                "error_message": error_message[:1900],
-                "retryable": retryable,
-            },
-        ).json()
+        payload: dict = {
+            "task_id": task_id,
+            "error_code": error_code[:64],
+            "error_message": error_message[:1900],
+            "retryable": retryable,
+        }
+        # 定位失败时带上候选框，云端转人工页面直接拿来当默认框
+        if candidates:
+            payload["candidates"] = candidates[:5]
+        return self._post("fail", payload).json()
 
 
 def _safe_json(resp: requests.Response) -> dict:

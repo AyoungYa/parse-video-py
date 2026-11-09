@@ -22,6 +22,7 @@ PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 def _serialize_user(user: User) -> dict:
     return {
         "id": user.id,
+        "user_no": user.user_no,
         "phone": user.phone,
         "nickname": user.nickname,
         "avatar": user.avatar,

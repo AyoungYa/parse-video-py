@@ -10,6 +10,7 @@ const MAP: Record<string, { text: string; tone: string; live?: boolean }> = {
   leased: { text: "已分配算力", tone: "brand", live: true },
   running: { text: "处理中", tone: "brand", live: true },
   verifying: { text: "验收中", tone: "brand", live: true },
+  needs_manual: { text: "待你框选", tone: "warn" },
   succeeded: { text: "已完成", tone: "ok" },
   failed: { text: "处理失败", tone: "bad" },
   cancelled: { text: "已取消", tone: "muted" },

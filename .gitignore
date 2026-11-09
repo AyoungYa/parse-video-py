@@ -183,12 +183,14 @@ cloud_web/staticfiles/
 cloud_web/media/
 cloud_web/frontend/node_modules/
 cloud_web/frontend/dist/
+# vite 生成的临时文件（每次启动都会新建）
+cloud_web/frontend/vite.config.ts.timestamp-*.mjs
+cloud_web/frontend/vite.config.ts.timestamp-*.tsbuildinfo
 cloud_web/deploy/certs/*
 !cloud_web/deploy/certs/.gitkeep
 gpu_worker/worker.sqlite3
 gpu_worker/workspace/
 gpu_worker/data/
-gpu_worker/scripts/
 node_modules/
 
 # demo/ 是本地素材区（1.7GB 视频成片，含多个超 100MB 文件）——豆豆 2026-11-04 拍板：不进远程仓库

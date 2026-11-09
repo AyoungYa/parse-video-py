@@ -191,7 +191,9 @@ class Runner:
 
         except PipelineError as exc:
             logger.error("任务 %s 失败：%s", task_id, exc)
-            self._report_failure(local, task_id, exc.code, exc.message, exc.retryable)
+            self._report_failure(
+                local, task_id, exc.code, exc.message, exc.retryable, candidates=exc.candidates
+            )
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("任务 %s 未预期失败", task_id)
@@ -203,10 +205,16 @@ class Runner:
 
     # ------------------------------------------------------------------
     def _report_failure(
-        self, local: LocalTask, task_id: str, code: str, message: str, retryable: bool
+        self,
+        local: LocalTask,
+        task_id: str,
+        code: str,
+        message: str,
+        retryable: bool,
+        candidates: list | None = None,
     ) -> None:
         try:
-            self.client.fail(task_id, code, message, retryable=retryable)
+            self.client.fail(task_id, code, message, retryable=retryable, candidates=candidates or [])
         except LeaseLost:
             logger.warning("上报失败时租约已丢（云端会自己回收）")
         except Exception as exc:  # noqa: BLE001

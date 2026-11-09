@@ -13,7 +13,8 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 
 from django.conf import settings
 
@@ -38,13 +39,30 @@ def _require_config() -> None:
         raise OssNotConfigured(f"OSS 配置缺失：{', '.join(missing)}")
 
 
+def endpoint_host() -> str:
+    """归一化 endpoint：去掉协议头和结尾斜杠，只留 host。
+
+    ★ 必须自己剥掉协议：oss2 的 _normalize_endpoint 在 endpoint 没写协议时会补
+    **http://**，于是 sign_url 生成的下载/上传链接全是 http://。站点是 HTTPS 时
+    浏览器会按「混合内容」直接拦掉预览和下载 —— 生产必炸。
+    所以这里统一强制 https，不依赖 .env 里有没有写协议。
+    """
+    raw = (settings.OSS_ENDPOINT or "").strip()
+    for prefix in ("https://", "http://"):
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix) :]
+            break
+    return raw.strip("/")
+
+
 def _bucket():
     """延迟导入 oss2，避免本地无依赖时 import 失败。"""
     import oss2
 
     _require_config()
     auth = oss2.Auth(settings.OSS_ACCESS_KEY_ID, settings.OSS_ACCESS_KEY_SECRET)
-    return oss2.Bucket(auth, settings.OSS_ENDPOINT, settings.OSS_BUCKET)
+    # 显式带 https://，避免 oss2 把无协议 endpoint 补成 http://
+    return oss2.Bucket(auth, f"https://{endpoint_host()}", settings.OSS_BUCKET)
 
 
 def upload_key(task_id: str) -> str:
@@ -71,7 +89,9 @@ def build_post_policy(task_id: str, key: str) -> dict:
     给出的 MIME 五花八门，硬卡会把正常上传挡掉，体积和 key 已经足够。
     """
     _require_config()
-    expire_at = datetime.now(dt_timezone.utc) + timedelta(seconds=settings.OSS_SIGN_EXPIRE_SECONDS)
+    expire_at = datetime.now(dt_timezone.utc) + timedelta(
+        seconds=settings.OSS_SIGN_EXPIRE_SECONDS
+    )
     policy_doc = {
         "expiration": expire_at.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         "conditions": [
@@ -89,7 +109,7 @@ def build_post_policy(task_id: str, key: str) -> dict:
     ).decode("ascii")
 
     return {
-        "host": f"https://{settings.OSS_BUCKET}.{settings.OSS_ENDPOINT}",
+        "host": f"https://{settings.OSS_BUCKET}.{endpoint_host()}",
         "accessid": settings.OSS_ACCESS_KEY_ID,
         "policy": policy,
         "signature": signature,
@@ -105,12 +125,16 @@ def presign_get(key: str, expire_seconds: int | None = None) -> str:
     return _bucket().sign_url("GET", key, expire, slash_safe=True)
 
 
-def presign_put(key: str, expire_seconds: int | None = None, content_type: str = "") -> str:
+def presign_put(
+    key: str, expire_seconds: int | None = None, content_type: str = ""
+) -> str:
     """签发一个只写、单对象、短时效的 URL，给算力机回传成片用。
 
     这样算力机不需要持有 OSS AK/SK —— 它只能往这一个 key 写，且 URL 会过期。
     """
-    expire = expire_seconds or settings.OSS_SIGN_EXPIRE_SECONDS * 4  # 大文件上传给足时间
+    expire = (
+        expire_seconds or settings.OSS_SIGN_EXPIRE_SECONDS * 4
+    )  # 大文件上传给足时间
     headers = {"Content-Type": content_type} if content_type else None
     return _bucket().sign_url("PUT", key, expire, headers=headers, slash_safe=True)
 

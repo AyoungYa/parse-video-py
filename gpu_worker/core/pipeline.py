@@ -31,15 +31,27 @@ logger = logging.getLogger(__name__)
 
 FRAME_RE = re.compile(r"(\d{1,7})\s*/\s*(\d{1,7})")
 PCT_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+# ★ 方括号包裹的阶段标记（如 "[1/3]"）不是帧进度，必须先剔除。
+#   否则 lama_apply 的 "[1/3] 加载模型" 会被当成 1/3 帧 → 进度条来回跳。
+BRACKET_RE = re.compile(r"\[\s*\d+\s*/\s*\d+\s*\]")
 TAIL_LINES = 200
+
+# 与 scripts/wm_common.py 的退出码约定保持一致（改一处必须同步另一处）
+_EXIT_LOCATE_LOW_CONFIDENCE = 3
+_BBOX_LINE_RE = re.compile(r"^BBOX_RESULT:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", re.M)
+_LOW_CONFIDENCE_RE = re.compile(r"^LOW_CONFIDENCE:\s*(.+)$", re.M)
+#: 候选框是一整行 JSON（非贪婪匹配到行尾）
+_CANDIDATES_RE = re.compile(r"^LOCATE_CANDIDATES:\s*(\{.*\}|\[.*\])\s*$", re.M)
 
 
 class PipelineError(Exception):
-    def __init__(self, code: str, message: str, retryable: bool = True):
+    def __init__(self, code: str, message: str, retryable: bool = True, candidates: list | None = None):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.retryable = retryable
+        # 定位失败时带上候选框，云端转人工页面直接拿来当默认框
+        self.candidates = candidates or []
 
 
 class Aborted(Exception):
@@ -91,6 +103,7 @@ class Pipeline:
         video = work / "input.mp4"
         mask = work / "mask.png"
         out = work / "output.mp4"
+        out_fixed = work / "output_fixed.mp4"
         report = work / "report.json"
 
         try:
@@ -108,6 +121,7 @@ class Pipeline:
                 "input": str(video),
                 "mask": str(mask),
                 "out": str(out),
+                "out_fixed": str(out_fixed),
                 "report": str(report),
                 "bbox": bbox,
                 "pad": str((payload.get("params") or {}).get("pad", settings.DEFAULT_PAD)),
@@ -128,6 +142,17 @@ class Pipeline:
 
                 result = self._run_stage(stage, ctx, stage_progress)
                 stage_results.append(result)
+                if result.exit_code == _EXIT_LOCATE_LOW_CONFIDENCE:
+                    # 定位置信度不足 → 转人工拖框，不重试（同样输入还是定位不到）
+                    reason = self._low_confidence_reason(result.tail)
+                    candidates = self._locate_candidates(result.tail)
+                    logger.info("定位置信度不足：%s，候选框 %d 个", reason, len(candidates))
+                    raise PipelineError(
+                        "LOCATE_LOW_CONFIDENCE",
+                        reason,
+                        retryable=False,
+                        candidates=candidates,
+                    )
                 if result.exit_code != 0:
                     raise PipelineError(
                         f"STAGE_{stage['name'].upper()}_FAILED",
@@ -138,11 +163,47 @@ class Pipeline:
                 if stage["name"] == "lama_apply" and not out.exists():
                     raise PipelineError("NO_OUTPUT", f"渲染结束但 {out} 不存在", retryable=True)
 
+                # build_mask 自动定位后回填最终 bbox（lama/verify/修复轮都要用）
+                if stage["name"] == "build_mask":
+                    ctx["bbox"] = self._bbox_from_output(result.tail) or ctx["bbox"]
+                    logger.info("build_mask 最终 bbox: %s", ctx["bbox"])
+
             metrics = self._read_report(report)
             if not out.exists():
                 raise PipelineError("NO_OUTPUT", "未生成成片", retryable=True)
 
-            return PipelineOutcome(out_path=out, report_path=report, metrics=metrics, stages=stage_results)
+            # ---- 决策树修复轮（坑 44）：不绿 → 按诊断追加一次修复 + 复验 ----
+            final_out = out
+            repair_name = {"needs_texture": "texture_fix", "needs_rowinterp": "texture_fix_rowinterp"}
+            diagnosis = (metrics or {}).get("diagnosis")
+            if diagnosis in settings.WM_REPAIR_STAGES and not metrics.get("all_green"):
+                logger.info("决策树：diagnosis=%s，进入修复轮", diagnosis)
+                repair_stage = {
+                    "name": repair_name[diagnosis],
+                    "cmd": settings.WM_REPAIR_STAGES[diagnosis],
+                }
+                res = self._run_stage(repair_stage, ctx, lambda f: on_progress(repair_name[diagnosis], 0.05 + 0.9 * min(1.0, f)))
+                stage_results.append(res)
+                if res.exit_code != 0:
+                    # 修复失败不判整个任务死刑：交付第一轮成片 + 原始诊断
+                    logger.warning("修复轮失败（exit %s），回退第一轮成片", res.exit_code)
+                elif out_fixed.exists():
+                    reverify = {"name": "verify_final", "cmd": settings.WM_REVERIFY_CMD}
+                    res2 = self._run_stage(reverify, ctx, lambda f: on_progress("verify_final", 0.05 + 0.9 * min(1.0, f)))
+                    stage_results.append(res2)
+                    m2 = self._read_report(report)
+                    if res2.exit_code == 0 and m2:
+                        # 两轮都不绿时，交付「评分更好」的那份
+                        if m2.get("all_green") or self._score(m2) >= self._score(metrics):
+                            final_out = out_fixed
+                            metrics = m2
+                            logger.info("修复轮生效：diagnosis=%s", m2.get("diagnosis"))
+                        else:
+                            logger.info("修复轮未改善（%s → %s），保留第一轮",
+                                        metrics.get("diagnosis"), m2.get("diagnosis"))
+
+            return PipelineOutcome(out_path=final_out, report_path=report,
+                                   metrics=metrics, stages=stage_results)
         except Aborted:
             raise
         except PipelineError:
@@ -250,6 +311,63 @@ class Pipeline:
         return ""  # 空则交给 build_mask 自动定位（脚本内走 min 投影）
 
     @staticmethod
+    def _bbox_from_output(stage_tail: str) -> str | None:
+        """build_mask 自动定位后，从阶段输出里解析最终 bbox 回填 ctx。"""
+        m = _BBOX_LINE_RE.search(stage_tail or "")
+        if not m:
+            return None
+        return " ".join(m.groups())
+
+    @staticmethod
+    def _low_confidence_reason(stage_tail: str) -> str:
+        """从 build_mask 输出里取低置信度原因。"""
+        m = _LOW_CONFIDENCE_RE.search(stage_tail or "")
+        if m:
+            return m.group(1).strip()
+        return "自动定位不可信，请手动框选水印位置"
+
+    @staticmethod
+    def _locate_candidates(stage_tail: str) -> list[dict]:
+        """从 build_mask 输出里取候选框列表。"""
+        m = _CANDIDATES_RE.search(stage_tail or "")
+        if not m:
+            return []
+        try:
+            data = json.loads(m.group(1))
+        except ValueError:
+            return []
+        if not isinstance(data, list):
+            return []
+        out = []
+        for c in data[:5]:
+            if isinstance(c, dict) and {"x", "y", "w", "h"} <= set(c):
+                out.append({k: int(c[k]) for k in ("x", "y", "w", "h")})
+        return out
+
+    @staticmethod
+    def _score(metrics: dict | None) -> float:
+        """两轮成片择优的评分（越大越好）。全绿与否优先，再看各分项。"""
+        if not metrics:
+            return -1e9
+        if metrics.get("all_green"):
+            return 1e6
+        raw = metrics.get("raw") or metrics
+        score = 0.0
+        gd = raw.get("glyph_drop") or {}
+        sig = raw.get("sigma_ratio") or {}
+        lap = raw.get("laplacian_ratio")
+        fl = raw.get("flicker_p90")
+        if isinstance(gd, dict) and gd.get("median") is not None:
+            score += min(gd["median"], 100.0)
+        if isinstance(sig, dict) and sig.get("median") is not None:
+            score -= abs(sig["median"] - 1.1) * 10   # σ 越接近 1.1 越好
+        if lap is not None:
+            score -= max(0.0, lap - 1.0) * 20
+        if fl is not None:
+            score -= max(0.0, fl - 1.0) * 20
+        return score
+
+    @staticmethod
     def _read_report(report_path: Path) -> dict:
         if not report_path.exists():
             return {}
@@ -267,25 +385,40 @@ class Pipeline:
 
 
 def _normalize_metrics(raw: dict) -> dict:
-    """把 verify.py 的报告收敛成四项前端能直接展示的指标。
+    """把 verify.py 的报告收敛成前端能直接展示的指标。
 
-    不同版本的 verify.py 字段名略有差异，这里做一次归一化 + 缺省标记，
-    前端永远只认这四个 key，避免报告格式变化把页面搞挂。
+    产品版 verify.py（gpu_worker/scripts/verify.py）的 report 已是统一结构：
+      residual_abs / sigma_ratio.median / flicker_p90 / diagnosis / all_green。
+    这里只做三件事：展平嵌套、兼容旧版扁平字段、标记缺省。
+    前端 MetricReport.vue 只认三个 key：residual_max / gradient_p50_ratio / flicker_p90。
     """
     flat = raw
     if isinstance(raw.get("summary"), dict):
         flat = {**raw, **raw["summary"]}
 
-    def pick(*names, default=None):
+    def pick(path: str, *names, default=None):
+        # 先按 "a.b" 路径取（产品版嵌套结构），再退回扁平 key（旧版兼容）
+        cur: object = flat
+        for part in path.split("."):
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            else:
+                cur = None
+                break
+        if isinstance(cur, (int, float)):
+            return float(cur)
         for n in names:
-            if n in flat and isinstance(flat[n], (int, float)):
-                return float(flat[n])
+            v = flat.get(n)
+            if isinstance(v, (int, float)):
+                return float(v)
         return default
 
+    sigma = pick("sigma_ratio.median", "sigma_ratio", "gradient_p50_ratio", "detail_ratio")
     metrics = {
-        "residual_max": pick("residual_max", "residual", "max_residual"),
-        "gradient_p50_ratio": pick("gradient_p50_ratio", "detail_ratio", "sigma_ratio"),
+        "residual_max": pick("residual_abs", "residual_max", "residual", "max_residual"),
+        "gradient_p50_ratio": sigma,
         "flicker_p90": pick("flicker_p90", "flicker", "temporal_p90"),
+        "diagnosis": flat.get("diagnosis"),
     }
     checks = {
         "residual_max": metrics["residual_max"] is not None and metrics["residual_max"] < 3,
@@ -293,9 +426,9 @@ def _normalize_metrics(raw: dict) -> dict:
         and metrics["gradient_p50_ratio"] > 0.85,
         "flicker_p90": metrics["flicker_p90"] is not None and metrics["flicker_p90"] < 1.5,
     }
-    measured = [v for v in checks.values() if v is not None]
-    metrics["all_green"] = bool(measured) and all(checks.values()) and all(
-        metrics[k] is not None for k in checks
+    # verify 自己的 all_green 优先（它看的检查项更全：region_max/laplacian 等）
+    metrics["all_green"] = bool(flat.get("all_green")) or (
+        bool(checks) and all(checks.values()) and all(metrics[k] is not None for k in checks)
     )
     metrics["raw"] = raw
     return metrics
@@ -320,13 +453,18 @@ def _kill(proc: subprocess.Popen) -> None:
 
 
 def _parse_progress(line: str) -> float | None:
-    """从脚本输出里抠进度：优先识别 `1843/4428` 帧号，其次 `42%`。"""
-    m = FRAME_RE.search(line)
+    """从脚本输出里抠进度：优先识别 `1843/4428` 帧号，其次 `42%`。
+
+    ★ 阶段标记 `[1/3]` 要先剔除：它是"第几步"不是"第几帧"，
+      不剔除会让进度条在 33%~100% 之间乱跳（实测踩过）。
+    """
+    cleaned = BRACKET_RE.sub(" ", line)
+    m = FRAME_RE.search(cleaned)
     if m:
         done, total = int(m.group(1)), int(m.group(2))
         if total > 0:
             return min(1.0, done / total)
-    m = PCT_RE.search(line)
+    m = PCT_RE.search(cleaned)
     if m:
         return min(1.0, float(m.group(1)) / 100)
     return None

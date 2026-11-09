@@ -166,7 +166,11 @@ def complete(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def fail(request):
-    """④ 失败上报。retryable 且未耗尽次数会打回队列。"""
+    """④ 失败上报。retryable 且未耗尽次数会打回队列。
+
+    ★ `LOCATE_LOW_CONFIDENCE` 会被 lease.fail_task 转成 `needs_manual`
+      （等用户手动框选），并把 `candidates`（定位候选框）存进 task.params。
+    """
     worker, error = _require_worker(request)
     if error:
         return error
@@ -182,6 +186,7 @@ def fail(request):
             error_code=request.data.get("error_code", "UNKNOWN")[:64],
             error_message=request.data.get("error_message", ""),
             retryable=bool(request.data.get("retryable", True)),
+            candidates=request.data.get("candidates") or [],
         )
     except lease.InvalidTransition as exc:
         return Response({"code": "invalid_transition", "message": str(exc)}, status=409)

@@ -126,12 +126,27 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 | 变量 | 为什么重要 |
 |------|-----------|
 | `OSS_*` | AK/SK **只在这里**。算力机拿到的是按对象签发的临时 URL，泄露面仅一个对象 |
+| `OSS_ENDPOINT` | 必须**公网**且与桶地域一致。写错地域 OSS 回 301；写 `-internal` 浏览器直传会失败；代码内部统一按 https 处理 |
 | `LEASE_SECONDS=90` | 必须 ≥ 心跳间隔的 6 倍。改小会让正常渲染被误判失联 |
 | `MAX_ATTEMPT=3` | 重试上限，防止一个坏任务反复烧算力 |
 | `MONTHLY_MINUTES_LIMIT=100` | 公平使用上限。**300 会亏钱**（见成本模型） |
 | `WORKER_CLAIM_TIMEOUT=25` | 长轮询秒数。gunicorn worker 数要 > 算力机数 × 2 |
 | `SMS_PROVIDER` | `console` 只打日志不真发（本地默认）；生产必须 `aliyun` |
 | `SMS_DEV_ECHO` | **生产必须 0**。1 会把验证码回显给前端，等于谁都能登录 |
+
+## 自检脚本
+
+配置填完/改动后按顺序跑：
+
+```bash
+uv run python scripts/check_db.py        # 数据库连通性
+uv run python scripts/check_oss.py       # OSS 六项：配置/endpoint 形态/地域/SDK/签名URL/PostObject
+uv run python scripts/e2e_oss.py         # 真实端到端：浏览器直传→确认→签名下载→worker回传（会写对象，跑完自清）
+uv run python scripts/run_tests_local.py # 本地 MySQL 跑单测（远程账号缺 CREATE DATABASE 时用这个）
+```
+
+`check_oss.py` 与 `e2e_oss.py` 都会在 `uploads/__probe__*/` 下写临时对象并在结束时删除；
+`e2e_oss.py` 的数据库侧走外层事务回滚，调试库不留脏数据。
 | `SMS_ALIYUN_SIGN_NAME/TEMPLATE_CODE` | 短信签名需已备案、模板需审核通过，否则发送接口返回 `isv.SMS_SIGNATURE_ILLEGAL` |
 
 ### 短信登录怎么联调

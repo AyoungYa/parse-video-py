@@ -31,6 +31,7 @@ const headline = computed(() => {
   if (s === "failed") return "处理失败";
   if (s === "cancelled") return "已取消";
   if (s === "expired") return "已过期";
+  if (s === "needs_manual") return "需要你确认水印位置";
   if (s === "verifying") return "验收中";
   if (s === "running" || s === "leased") return "处理中";
   return "排队中";
@@ -127,6 +128,11 @@ function again() {
   router.push({ name: "upload" });
 }
 
+function goMask() {
+  stopPolling();
+  router.push({ name: "mask-confirm", params: { id: taskId } });
+}
+
 onMounted(() => {
   void poll();
   pollTimer = window.setInterval(poll, 2000);
@@ -198,6 +204,28 @@ onBeforeUnmount(() => {
             @click="cancel"
           >
             {{ cancelling ? "取消中…" : "取消并退还积分" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 自动定位没把握：转人工框选，任务没失败、积分也没退 -->
+      <div v-else-if="task.status === 'needs_manual'" class="card manual">
+        <div class="row" style="gap: 10px; flex-wrap: wrap">
+          <span class="tag tag-warn">等你操作</span>
+          <span class="micro muted">任务已暂停，不会自动失败，也不会扣第二次积分</span>
+        </div>
+        <h2 class="h2" style="margin-top: 14px">这条的水印位置，得请你框一下</h2>
+        <p class="small secondary" style="margin-top: 8px; line-height: 1.8">
+          自动识别对这条视频没把握（{{ task.locate_reason || "候选区域不够可信" }}）。
+          你只要在画面上拖个框圈住水印，我们就接着往下处理，前后大概十几秒。
+        </p>
+        <p v-if="task.locate_candidates?.length" class="micro muted" style="margin-top: 8px">
+          已经帮你找了 {{ task.locate_candidates.length }} 个候选位置，进去点一下就能用。
+        </p>
+        <div class="row" style="margin-top: 20px; gap: 10px; flex-wrap: wrap">
+          <button class="btn btn-primary" type="button" @click="goMask">去框选水印</button>
+          <button class="link-btn" type="button" :disabled="cancelling" @click="cancel">
+            {{ cancelling ? "取消中…" : "不处理了，取消并退积分" }}
           </button>
         </div>
       </div>

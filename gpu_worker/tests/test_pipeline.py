@@ -22,6 +22,47 @@ class ProgressParseTest(SimpleTestCase):
     def test_no_progress(self):
         self.assertIsNone(_parse_progress("Loading model weights..."))
 
+    def test_stage_marker_is_not_frame_progress(self):
+        # ★ 回归：lama_apply 打 "[1/3] 加载模型"，被当成 1/3 帧会让进度条乱跳
+        self.assertIsNone(_parse_progress("[1/3] 加载 LaMa 模型(首次运行自动下载)..."))
+        self.assertIsNone(_parse_progress("[2/3] 流式渲染(解码 -> LaMa -> 编码)..."))
+
+    def test_frame_progress_survives_bracket_stripping(self):
+        # 行内有阶段标记但也有真帧号时，取帧号
+        self.assertAlmostEqual(_parse_progress("[2/3] 240/240 frames  3.0s"), 1.0, places=3)
+
+
+class BboxBackfillTest(SimpleTestCase):
+    """build_mask 自动定位后回填 bbox（后续阶段都靠它）。"""
+
+    def test_parse_bbox_result_line(self):
+        out = "[1/3] 自动定位...\nBBOX_RESULT: 1485 46 388 126\n[3/3] mask 写出"
+        self.assertEqual(Pipeline._bbox_from_output(out), "1485 46 388 126")
+
+    def test_missing_bbox_line_returns_none(self):
+        self.assertIsNone(Pipeline._bbox_from_output("[1/3] 什么都没输出"))
+
+    def test_only_first_bbox_line_used(self):
+        out = "BBOX_RESULT: 1 2 3 4\nBBOX_RESULT: 5 6 7 8"
+        self.assertEqual(Pipeline._bbox_from_output(out), "1 2 3 4")
+
+
+class RepairScoreTest(SimpleTestCase):
+    """两轮成片择优的评分（修复轮可能反而变差，要能挑出更好的那份）。"""
+
+    def test_green_beats_non_green(self):
+        green = _normalize_metrics({"all_green": True, "residual_abs": 0.9})
+        bad = _normalize_metrics({"residual_abs": 0.9, "sigma_ratio": {"median": 0.5}})
+        self.assertGreater(Pipeline._score(green), Pipeline._score(bad))
+
+    def test_closer_sigma_is_better(self):
+        a = _normalize_metrics({"residual_abs": 0.9, "sigma_ratio": {"median": 1.05}})
+        b = _normalize_metrics({"residual_abs": 0.9, "sigma_ratio": {"median": 0.55}})
+        self.assertGreater(Pipeline._score(a), Pipeline._score(b))
+
+    def test_missing_metrics_scores_lowest(self):
+        self.assertLess(Pipeline._score(None), Pipeline._score(_normalize_metrics({})))
+
 
 class MetricsNormalizeTest(SimpleTestCase):
     def test_all_green_when_three_metrics_pass(self):

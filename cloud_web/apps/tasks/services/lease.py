@@ -23,6 +23,10 @@ from ..models import IN_FLIGHT, Task, TaskEvent, TaskStatus, WorkerNode
 
 logger = logging.getLogger(__name__)
 
+#: worker 上报这个码 = 「自动定位不可信，请人工框选」。
+#: 与 gpu_worker/scripts/wm_common.py 的 EXIT_LOCATE_LOW_CONFIDENCE 对应，改一处要同步另一处。
+LOCATE_LOW_CONFIDENCE_CODE = "LOCATE_LOW_CONFIDENCE"
+
 
 class LeaseLost(Exception):
     """租约已失效（超时被回收 / 任务被取消）。worker 必须立刻停止本地渲染。"""
@@ -187,8 +191,16 @@ def fail_task(
     error_code: str,
     error_message: str = "",
     retryable: bool = True,
+    candidates: list | None = None,
 ) -> Task:
-    """失败上报。可重试且未耗尽次数 → 打回 pending；否则判 failed 并退款。"""
+    """失败上报。可重试且未耗尽次数 → 打回 pending；否则判 failed 并退款。
+
+    ★ 特例：`LOCATE_LOW_CONFIDENCE`（自动定位不可信）**不判失败**，
+      而是转 `needs_manual` 等用户手动框选。
+      理由：定位失败不是「片子有问题」，重试也没用（同样的输入还是同样定位不到），
+      但只要用户框一下就能继续 —— 这时判失败 + 退款是最差的处理
+      （用户白等一轮，钱还退了，体验断掉）。
+    """
     with transaction.atomic():
         task = Task.objects.select_for_update().filter(id=task_id).first()
         if task is None:
@@ -197,8 +209,35 @@ def fail_task(
             return task  # 幂等
 
         from_status = task.status
-        can_retry = retryable and task.attempt < settings.MAX_ATTEMPT
         now = timezone.now()
+
+        # ── 定位置信度不足 → 转人工框选 ──
+        if error_code == LOCATE_LOW_CONFIDENCE_CODE:
+            task.status = TaskStatus.NEEDS_MANUAL
+            task.worker = None
+            task.lease_expires_at = None
+            task.progress = 0
+            task.error_code = error_code
+            task.error_message = error_message[:2000]
+            # 把候选框存进 params，前端直接拿来当默认框，用户微调即可
+            params = dict(task.params or {})
+            params["locate_candidates"] = (candidates or [])[:5]
+            task.params = params
+            task.save(
+                update_fields=[
+                    "status",
+                    "worker",
+                    "lease_expires_at",
+                    "progress",
+                    "error_code",
+                    "error_message",
+                    "params",
+                ]
+            )
+            _log(task, from_status, TaskStatus.NEEDS_MANUAL, actor=worker.name, code=error_code)
+            return task
+
+        can_retry = retryable and task.attempt < settings.MAX_ATTEMPT
 
         if can_retry:
             task.status = TaskStatus.PENDING

@@ -20,8 +20,22 @@ export interface Quota {
   minutes_limit: number;
 }
 
+/** 水印区域，原片像素坐标 [x, y, w, h]。 */
+export type BBox = [number, number, number, number];
+
+/** 自动定位失败时给出的候选框（原片像素坐标，供用户一键套用后微调）。 */
+export interface LocateCandidate {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  std_ratio?: number;
+}
+
 export interface UserProfile {
   id: number;
+  /** 对外业务号，用户端查询/工单用这个，不用内部自增 ID */
+  user_no: string;
   phone: string;
   nickname: string;
   avatar: string;
@@ -32,6 +46,8 @@ export interface UserProfile {
 
 export interface TaskDetail {
   id: string;
+  /** 对外业务号，和 id（UUID）一样可以用来查询 */
+  task_no: string;
   status: TaskStatus;
   progress: number;
   duration_seconds: number;
@@ -47,11 +63,20 @@ export interface TaskDetail {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
-  /** 原片签名地址（对比视图用） */
+  /** 原片签名地址（对比视图 / 框选页用），10 分钟有效 */
   preview_url?: string;
   /** 成片签名地址 */
   download_url?: string;
   report_url?: string;
+
+  // ↓ 仅 needs_manual（自动定位失败，等用户框选）时返回
+  /** 自动定位的候选框，最多 5 个 */
+  locate_candidates?: LocateCandidate[];
+  /** 定位失败原因，展示给用户 */
+  locate_reason?: string;
+  /** 原片像素尺寸，框选坐标系以它为准 */
+  frame_width?: number;
+  frame_height?: number;
 }
 
 export type TaskStatus =
@@ -60,6 +85,8 @@ export type TaskStatus =
   | "leased"
   | "running"
   | "verifying"
+  /** 自动定位没把握，等用户手动框选水印位置 */
+  | "needs_manual"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -124,6 +151,12 @@ export const api = {
   taskDetail: (taskId: string) => http.get<TaskDetail>(`/tasks/${taskId}`),
   taskList: () => http.get<TaskListItem[]>("/tasks"),
   cancelTask: (taskId: string) => http.post(`/tasks/${taskId}/cancel`),
+  /** 手动框选水印位置后重新入队。仅 needs_manual 状态可提交，不会重复扣分。 */
+  submitBbox: (taskId: string, bbox: [number, number, number, number]) =>
+    http.post<{ ok: boolean; task_id: string; status: TaskStatus; bbox: number[] }>(
+      `/tasks/${taskId}/bbox`,
+      { bbox }
+    ),
 
   signIn: () => http.post<{ already?: boolean; capped?: boolean; points?: number; streak?: number }>(
     "/billing/sign-in"

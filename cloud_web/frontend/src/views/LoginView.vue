@@ -32,6 +32,10 @@ const SELLING = [
   { k: "不达标不计费", v: "任何一项没过线，本次免费" },
 ];
 
+/* 备案号（工信部要求页底展示）。备案通过后替换成真实号码并把 HAS_ICP 改 true。 */
+const ICP_NUMBER = "京ICP备00000000号";
+const HAS_ICP = false;
+
 function startCountdown(seconds: number) {
   countdown.value = Math.max(1, Math.ceil(seconds));
   localStorage.setItem(SENT_AT_KEY, String(Date.now()));
@@ -205,6 +209,18 @@ async function submit() {
 
         <p class="legal-mobile legal">
           仅限处理您拥有版权或已获授权的素材。本站不提供任何平台视频解析或下载功能。
+        </p>
+
+        <!-- 备案号（工信部要求页底展示；登录页是分栏布局，不挂通栏页脚） -->
+        <p class="beian micro">
+          <a
+            v-if="HAS_ICP"
+            href="https://beian.miit.gov.cn/"
+            target="_blank"
+            rel="noopener noreferrer"
+            >{{ ICP_NUMBER }}</a
+          >
+          <span v-else>ICP 备案办理中</span>
         </p>
       </div>
     </main>
@@ -413,6 +429,23 @@ async function submit() {
 
 .legal-mobile {
   display: none;
+}
+
+/* 备案号：页底展示（工信部要求），样式与 legal 说明保持同一层级 */
+.beian {
+  margin-top: 14px;
+  color: var(--ink-300);
+  line-height: 1.6;
+}
+
+.beian a {
+  color: var(--ink-400);
+  text-decoration: none;
+}
+
+.beian a:hover {
+  color: var(--brand);
+  text-decoration: underline;
 }
 
 @media (max-width: 880px) {

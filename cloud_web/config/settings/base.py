@@ -139,7 +139,7 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 
 # ---- 阿里云 OSS（AK/SK 只存在于云端，绝不外发给算力机）----
-OSS_ENDPOINT = os.getenv("OSS_ENDPOINT", "oss-cn-hangzhou.aliyuncs.com")
+OSS_ENDPOINT = os.getenv("OSS_ENDPOINT", "oss-cn-shenzhen.aliyuncs.com")
 OSS_BUCKET = os.getenv("OSS_BUCKET", "")
 OSS_ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID", "")
 OSS_ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET", "")

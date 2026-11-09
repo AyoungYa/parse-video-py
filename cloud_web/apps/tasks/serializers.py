@@ -14,6 +14,7 @@ class TaskListSerializer(serializers.ModelSerializer):
         model = Task
         fields = (
             "id",
+            "task_no",
             "status",
             "progress",
             "duration_seconds",
@@ -32,6 +33,7 @@ class TaskDetailSerializer(serializers.ModelSerializer):
         model = Task
         fields = (
             "id",
+            "task_no",
             "status",
             "progress",
             "duration_seconds",

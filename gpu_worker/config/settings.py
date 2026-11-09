@@ -76,9 +76,13 @@ WM_PYTHON = os.getenv("WM_PYTHON", sys.executable)
 
 # ---------------- 处理阶段（命令模板）----------------
 # ★ 这里刻意做成「可配置的命令模板」而不是硬编码：
-#   不同版本的 skill 脚本参数名可能不同，改 .env 就能适配，不用改代码。
-#   可用占位符：{python} {scripts} {work} {input} {mask} {out} {report} {bbox} {pad} {device}
+#   不同机器的脚本参数可能不同，改 .env 就能适配，不用改代码。
+#   可用占位符：{python} {scripts} {work} {input} {mask} {out} {out_fixed}
+#               {report} {bbox} {pad} {device}
 #   判定成功只看**退出码 0**（踩坑手册铁律 2：日志里出现"完成"不代表成功）。
+#   ★ build_mask 退出码 3 = 定位置信度不足 → 任务转人工，不重试。
+#   ★ verify 后 pipeline 按 report.json 的 diagnosis 决定是否追加修复轮（见
+#     WM_REPAIR_STAGES），决策树阈值固化在 verify.py（坑 44）。
 WM_STAGES_TEMPLATE = [
     {
         "name": "build_mask",
@@ -97,7 +101,7 @@ WM_STAGES_TEMPLATE = [
         "required": True,
         "cmd": [
             "{python}",
-            "{scripts}/lama_apply_maskonly.py",
+            "{scripts}/lama_apply.py",
             "--input", "{input}",
             "--mask", "{mask}",
             "--out", "{out}",
@@ -116,9 +120,50 @@ WM_STAGES_TEMPLATE = [
             "--original", "{input}",
             "--processed", "{out}",
             "--mask", "{mask}",
+            "--bbox", "{bbox}",
             "--out", "{report}",
         ],
     },
+]
+
+# 决策树修复轮（verify 的 diagnosis → 修复命令）。输入是第一轮成片 {out}，
+# 输出到 {out_fixed}；修复后 pipeline 自动再跑一次 verify（针对 out_fixed）。
+# 两轮都不绿 → 交付较优的那份并保留 diagnosis 供云端转人工。
+WM_REPAIR_STAGES = {
+    # A 类·过平滑（σ 比 < 0.8）：补周边真实纹理（固定 strength 1.3，实测最优）
+    "needs_texture": [
+        "{python}",
+        "{scripts}/texture_fix.py",
+        "--input", "{out}",
+        "--mask", "{mask}",
+        "--bbox", "{bbox}",
+        "--strength", "1.3",
+        "--audio-from", "{input}",
+        "--out", "{out_fixed}",
+    ],
+    # B 类·伪噪点/条带断裂（Laplacian 能量比 > 1.5×）：低频行插值 + 高频保留
+    "needs_rowinterp": [
+        "{python}",
+        "{scripts}/texture_fix.py",
+        "--input", "{out}",
+        "--mask", "{mask}",
+        "--bbox", "{bbox}",
+        "--lf-mode", "rowinterp",
+        "--strength", "1.3",
+        "--audio-from", "{input}",
+        "--out", "{out_fixed}",
+    ],
+}
+
+# 修复轮之后重新验收的命令（--processed 指向 out_fixed）
+WM_REVERIFY_CMD = [
+    "{python}",
+    "{scripts}/verify.py",
+    "--original", "{input}",
+    "--processed", "{out_fixed}",
+    "--mask", "{mask}",
+    "--bbox", "{bbox}",
+    "--out", "{report}",
 ]
 
 DEFAULT_PAD = int(os.getenv("DEFAULT_PAD", "10"))
