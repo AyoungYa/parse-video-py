@@ -27,6 +27,14 @@
   --brand-wash: #eaf4f0;
   --brand-ring: rgba(14, 92, 74, 0.16);
 
+  /* ── 会员标识：古铜金（与墨绿同属「器物」色系，尊贵但不俗艳） ── */
+  --gold-lite: #dfc07c;
+  --gold: #c39b4c;
+  --gold-deep: #9a742d;
+  --gold-wash: #f6eedb;
+  --gold-ring: rgba(154, 116, 45, 0.24);
+  --gold-sheen: rgba(255, 255, 255, 0.38); /* 金属徽章顶部高光 */
+
   /* ── 语义：指标红绿（与品牌色拉开明度差，不会混） ── */
   --ok: #12946a;
   --ok-wash: #e8f7f0;

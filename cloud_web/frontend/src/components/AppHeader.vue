@@ -33,7 +33,22 @@ function logout() {
           </svg>
           积分 {{ user.points ?? "—" }}
         </router-link>
-        <router-link to="/points" class="who">{{ user.nickname || "我的" }}</router-link>
+        <router-link to="/points" class="who">
+          {{ user.nickname || "我的" }}
+          <span
+            v-if="user.quota?.is_member"
+            class="member-badge"
+            title="会员生效中 · 订阅期内不限条数"
+          >
+            <svg viewBox="0 0 14 14" class="crown" aria-hidden="true">
+              <path
+                d="M2.1 4.4 4.5 6.5 7 2.9l2.5 3.6 2.4-2.1-1 5.8c-.1.5-.5.8-1 .8H3.1c-.5 0-.9-.3-1-.8z"
+                fill="currentColor"
+              />
+            </svg>
+            会员
+          </span>
+        </router-link>
         <button class="link-btn" type="button" @click="logout">退出</button>
       </div>
     </div>
@@ -108,12 +123,43 @@ function logout() {
 }
 
 .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--ink-600);
   font-size: var(--fs-small);
 }
 
 .who:hover {
   color: var(--ink-900);
+}
+
+/* 会员徽章：古铜金渐变 + 顶部高光，像一枚小铜牌 */
+.member-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(160deg, var(--gold-lite), var(--gold) 52%, var(--gold-deep));
+  box-shadow: inset 0 1px 0 var(--gold-sheen), 0 1px 3px var(--gold-ring);
+  color: var(--surface);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  transition: filter 0.15s ease;
+}
+
+.member-badge:hover {
+  filter: brightness(1.08);
+}
+
+.crown {
+  width: 13px;
+  height: 13px;
+  flex: none;
 }
 
 .link-btn {
