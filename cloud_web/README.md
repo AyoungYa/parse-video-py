@@ -123,7 +123,7 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 
 | 命令 | 频率 | 作用 |
 |------|------|------|
-| `reclaim_leases` | 30s | 租约超时打回队列 / 判失败退款 |
+| `reclaim_leases` | 30s | alive 超过 60 秒未上报则节点离线、任务进入内部接力状态；同时回收超时租约 |
 | `expire_stale_uploads` | 30s | 只传了一半就走人的任务标记过期 |
 | `cleanup_oss` | 建议每小时（另配 cron） | 删 24h 前对象，兑现「处理完即删」 |
 

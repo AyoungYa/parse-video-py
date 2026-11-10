@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import type { TaskStatus } from "@/api/client";
 
-const props = defineProps<{ status: TaskStatus | string; progress?: number }>();
+const props = defineProps<{ status: TaskStatus | string; progress?: number; confirmed?: boolean }>();
 
 const MAP: Record<string, { text: string; tone: string; live?: boolean }> = {
   awaiting_upload: { text: "等待上传", tone: "muted" },
@@ -21,7 +21,12 @@ const MAP: Record<string, { text: string; tone: string; live?: boolean }> = {
   expired: { text: "已过期", tone: "muted" },
 };
 
-const info = computed(() => MAP[props.status] ?? { text: props.status, tone: "muted" });
+const info = computed(() => {
+  if (props.confirmed && (props.status === "pending" || props.status === "leased")) {
+    return { text: "等待去水印", tone: "brand", live: true };
+  }
+  return MAP[props.status] ?? { text: props.status, tone: "muted" };
+});
 
 const label = computed(() => {
   const base = info.value.text;

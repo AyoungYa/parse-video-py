@@ -15,6 +15,16 @@ confidence: high
 
 定位置信度不足时仍进入待确认阶段，允许用户从候选框选择或手动画框。准备或渲染阶段租约超时、可重试错误回到 `pending`；重试耗尽转 `failed`。`awaiting_confirmation` 可取消并退款。所有状态变化写 `TaskEvent`。关键帧对象与原片、成片一并按保留期清理。
 
+可重试错误最多按当前阶段的 `MAX_ATTEMPT` 自动尝试次数重跑；内部状态回到 `pending` 以供领取，但用户接口维持失败前的处理阶段和进度，不显示内部错误。新 worker 上报阶段后清除此显示快照；只有次数耗尽或不可重试错误才向用户显示失败。
+
+失败任务在原片仍存在 OSS 时，用户可调用 `POST /api/v1/tasks/<id>/retry`，复用原片和已登记检查点回到 `pending`，不必重新上传。已退款任务重新处理不再扣积分；接口对同一任务仅接受 `failed` 状态，且原片已清理时拒绝重试。内部保留失败堆栈，用户详情只返回通用系统失败提示。
+
+worker 计划重启时会停止当前处理，通过 `POST /api/v1/worker/release` 归还本节点持有的租约，任务立即回到 `pending`，不消耗失败重试次数。强制结束或断电无法上报时，云端领取接口每隔数秒检查过期租约，超时后自动回收；原有 `reclaim_leases` 定时命令仍可独立运行。
+
+worker 进程启动后独立于任务每 10 秒调用 `POST /api/v1/worker/alive`。云端 reaper 每 30 秒检查，超过 60 秒未收到 alive 的节点标为 offline，其在途任务转为内部 `worker_offline` 并清空持有者与租约，供其他 worker 接力。原处理阶段保存在检查点元数据中，用户接口继续返回原阶段；接力 worker 上报新阶段后清除该显示快照。任务心跳仍单独负责续租，不更新进程级 alive 时间。
+
+准备阶段的关键帧逐张上传 OSS，并通过 `POST /api/v1/worker/frame` 登记成功上传的图片；接力 worker 先下载已登记且仍存在的帧，只补提缺失的帧。确认水印后，渲染阶段每完成 `build_mask`、`lama_apply`、`verify`，以及可选的修复轮和复验，就先上传阶段产物，再用 `POST /api/v1/worker/checkpoint` 登记在 `Task.checkpoints`，并写 `TaskEvent`。每个成功检查点会重置当前阶段的失败计数，避免前面阶段用完后续重试机会。每次领取使用独立 OSS 产物路径，避免旧 worker 的未过期上传链接覆盖新产物。云端只接受当前租约持有者的上报且检查产物确实存在；新 worker 领取任务时得到这些产物的短时效下载链接，恢复已登记且仍存在的阶段，缺失的阶段重新计算；重算上游阶段会废弃原有下游检查点。最终成片仍通过 `complete` 上报；所有检查点产物随任务素材一起按保留期删除。
+
 相关代码：`cloud_web/apps/tasks/services/lease.py`、`cloud_web/apps/tasks/views_worker.py`、`cloud_web/apps/tasks/views_user.py`、`gpu_worker/core/pipeline.py`、`gpu_worker/core/runner.py`。
 
 ## 流程：分享链接解析

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import UploadPanel from "@/components/UploadPanel.vue";
 import TaskChip from "@/components/TaskChip.vue";
@@ -11,6 +11,7 @@ const router = useRouter();
 const user = useUserStore();
 const site = useSiteStore();
 const recent = ref<TaskListItem[]>([]);
+let recentTimer: number | undefined;
 
 const TIPS = [
   "水印压在边角、背景相对平稳的片子，修复后几乎看不出接缝。",
@@ -22,14 +23,28 @@ function onSubmitted(taskId: string) {
   router.push({ name: "result", params: { id: taskId } });
 }
 
-onMounted(async () => {
-  await user.refresh().catch(() => undefined);
+async function refreshRecent() {
   try {
     const { data } = await api.taskList();
     recent.value = data.filter((t) => t.status !== "awaiting_upload").slice(0, 4);
   } catch {
-    recent.value = [];
+    // 短暂断网时保留上一份列表，下一轮自动恢复。
   }
+}
+
+function onVisible() {
+  if (!document.hidden) void refreshRecent();
+}
+
+onMounted(() => {
+  void user.refresh().catch(() => undefined);
+  void refreshRecent();
+  recentTimer = window.setInterval(() => { if (!document.hidden) void refreshRecent(); }, 5000);
+  document.addEventListener("visibilitychange", onVisible);
+});
+onBeforeUnmount(() => {
+  if (recentTimer) window.clearInterval(recentTimer);
+  document.removeEventListener("visibilitychange", onVisible);
 });
 </script>
 
@@ -89,7 +104,7 @@ onMounted(async () => {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
 }
 
@@ -131,7 +146,7 @@ onMounted(async () => {
   }
 
   .grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 }
 </style>

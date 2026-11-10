@@ -41,7 +41,9 @@ def _build_payload(task, lease_seconds: int) -> dict:
     """下发给 worker 的任务包。视频走签名 URL，不下发 OSS 凭证。"""
     rkey = oss.result_key(str(task.id))
     pkey = oss.report_key(str(task.id))
-    fkeys = [oss.keyframe_key(str(task.id), i) for i in range(3)]
+    checkpoint_stages = list(oss.CHECKPOINT_FILES)
+    active_run_id = (task.checkpoints or {}).get("_active_run_id", "")
+    fkeys = [oss.keyframe_key(str(task.id), i, active_run_id) for i in range(3)]
     payload = {
         "task_id": str(task.id),
         "lease_seconds": lease_seconds,
@@ -57,6 +59,7 @@ def _build_payload(task, lease_seconds: int) -> dict:
         "report_key": pkey,
         "phase": "render" if (task.params or {}).get("bbox_confirmed") else "prepare",
         "keyframe_keys": fkeys,
+        "checkpoint_get_urls": {},
     }
     try:
         payload["video_url"] = oss.presign_get(task.original_key)
@@ -68,10 +71,87 @@ def _build_payload(task, lease_seconds: int) -> dict:
         payload["keyframe_upload_urls"] = [
             oss.presign_put(key, content_type="image/jpeg") for key in fkeys
         ]
+        saved_frames = (task.checkpoints or {}).get("keyframes") or {}
+        payload["keyframe_resume_urls"] = {}
+        if payload["phase"] == "prepare":
+            for i in range(3):
+                saved_key = saved_frames.get(str(i))
+                if not saved_key and not active_run_id:
+                    saved_key = oss.keyframe_key(str(task.id), i)
+                if saved_key and oss.object_exists(saved_key):
+                    payload["keyframe_resume_urls"][str(i)] = oss.presign_get(saved_key)
+        payload["checkpoint_upload_urls"] = {
+            stage: oss.presign_put(
+                oss.checkpoint_key(str(task.id), stage, active_run_id),
+                # 每次领取独立路径，旧 worker 的未过期签名无法覆盖接力产物。
+                content_type="application/json" if stage in ("verify", "verify_final")
+                else "image/png" if stage == "build_mask" else "video/mp4",
+            )
+            for stage in checkpoint_stages
+        }
+        if payload["phase"] == "render":
+            recorded = task.checkpoints or {}
+            for stage in checkpoint_stages:
+                if stage == "build_mask" and task.mask_key:
+                    continue
+                if stage == "verify_final" and not any(
+                    name in payload["checkpoint_get_urls"]
+                    for name in ("texture_fix", "texture_fix_rowinterp")
+                ):
+                    continue
+                entry = recorded.get(stage)
+                key = entry.get("key") if isinstance(entry, dict) else None
+                if not key or not oss.object_exists(key):
+                    if stage in ("texture_fix", "texture_fix_rowinterp", "verify_final"):
+                        continue
+                    break
+                payload["checkpoint_get_urls"][stage] = oss.presign_get(key)
+            payload["checkpoint_metrics"] = {
+                stage: recorded[stage].get("metrics", {})
+                for stage in ("verify", "verify_final") if stage in payload["checkpoint_get_urls"]
+            }
     except oss.OssNotConfigured:
         # 不静默降级：没有签名 URL 的 worker 什么也干不了
         raise
     return payload
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def checkpoint(request):
+    worker, error = _require_worker(request)
+    if error:
+        return error
+    task_id = request.data.get("task_id")
+    stage = request.data.get("stage")
+    if not task_id or not isinstance(stage, str) or stage not in oss.CHECKPOINT_FILES:
+        return Response({"code": "bad_request", "message": "任务或处理阶段无效"}, status=400)
+    try:
+        task = lease.record_checkpoint(worker, task_id, stage, request.data.get("metrics"))
+    except lease.LeaseLost as exc:
+        return Response({"code": "lease_lost", "message": str(exc)}, status=409)
+    except lease.InvalidTransition as exc:
+        return Response({"code": "invalid_transition", "message": str(exc)}, status=409)
+    return Response({"ok": True, "task_id": str(task.id), "stage": stage})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def frame(request):
+    worker, error = _require_worker(request)
+    if error:
+        return error
+    task_id = request.data.get("task_id")
+    index = request.data.get("index")
+    if not task_id or type(index) is not int or index not in range(3):
+        return Response({"code": "bad_request", "message": "任务或关键帧序号无效"}, status=400)
+    try:
+        task = lease.record_keyframe(worker, task_id, index)
+    except lease.LeaseLost as exc:
+        return Response({"code": "lease_lost", "message": str(exc)}, status=409)
+    except lease.InvalidTransition as exc:
+        return Response({"code": "invalid_transition", "message": str(exc)}, status=409)
+    return Response({"ok": True, "task_id": str(task.id), "index": index})
 
 
 @api_view(["POST"])
@@ -87,7 +167,15 @@ def prepared(request):
     if bbox and (any(type(v) is not int for v in bbox) or bbox[0] < 0 or bbox[1] < 0
                  or bbox[2] < 8 or bbox[3] < 8):
         return Response({"code": "bad_bbox", "message": "建议区域无效"}, status=400)
-    if not all(oss.object_exists(oss.keyframe_key(task_id, i)) for i in range(3)):
+    from .models import Task
+    task = Task.objects.filter(id=task_id).first()
+    saved_frames = (task.checkpoints or {}).get("keyframes") if task else {}
+    legacy = not (task and (task.checkpoints or {}).get("_active_run_id"))
+    if not all(
+        (key := (saved_frames or {}).get(str(i)) or (oss.keyframe_key(task_id, i) if legacy else ""))
+        and oss.object_exists(key)
+        for i in range(3)
+    ):
         return Response({"code": "keyframe_missing", "message": "关键帧尚未上传"}, status=409)
     try:
         task = lease.prepare_task(worker, task_id, bbox, request.data.get("candidates") or [])
@@ -105,10 +193,16 @@ def claim(request):
         return error
 
     capabilities = request.data.get("capabilities") or {}
-    lease.touch_worker(worker, capabilities)
+    if capabilities:
+        type(worker).objects.filter(pk=worker.pk).update(capabilities=capabilities)
 
     deadline = time.monotonic() + settings.WORKER_CLAIM_TIMEOUT
+    next_reclaim = 0.0
     while True:
+        if time.monotonic() >= next_reclaim:
+            lease.mark_offline_workers(batch=20)
+            lease.reclaim_expired_leases(batch=20)
+            next_reclaim = time.monotonic() + 5
         task = lease.claim_next_task(worker)
         if task is not None:
             try:
@@ -125,6 +219,34 @@ def claim(request):
         if time.monotonic() >= deadline:
             return Response(status=status.HTTP_204_NO_CONTENT)
         time.sleep(1.0)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def alive(request):
+    """进程级存活上报，不依赖任务领取或任务心跳。"""
+    worker, error = _require_worker(request)
+    if error:
+        return error
+    lease.touch_worker(worker)
+    return Response({"ok": True})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def release(request):
+    """计划重启时释放当前任务，让下一次领取从所属阶段重新执行。"""
+    worker, error = _require_worker(request)
+    if error:
+        return error
+    task_id = request.data.get("task_id")
+    if not task_id:
+        return Response({"code": "missing_task_id", "message": "缺少 task_id"}, status=400)
+    try:
+        task = lease.release_for_restart(worker, task_id)
+    except lease.LeaseLost as exc:
+        return Response({"code": "lease_lost", "message": str(exc)}, status=409)
+    return Response({"ok": True, "task_id": str(task.id), "status": task.status})
 
 
 @api_view(["POST"])
@@ -152,7 +274,6 @@ def heartbeat(request):
             {"ok": False, "code": "lease_lost", "message": str(exc)}, status=status.HTTP_409_CONFLICT
         )
 
-    lease.touch_worker(worker)
     return Response({"ok": True, "lease_seconds": lease_seconds})
 
 
@@ -180,7 +301,6 @@ def complete(request):
     except lease.InvalidTransition as exc:
         return Response({"code": "invalid_transition", "message": str(exc)}, status=409)
 
-    lease.touch_worker(worker)
     return Response(
         {
             "ok": True,
@@ -219,5 +339,4 @@ def fail(request):
     except lease.InvalidTransition as exc:
         return Response({"code": "invalid_transition", "message": str(exc)}, status=409)
 
-    lease.touch_worker(worker)
     return Response({"ok": True, "task_id": str(task.id), "status": task.status, "attempt": task.attempt})

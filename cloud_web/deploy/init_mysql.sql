@@ -111,7 +111,7 @@ CREATE TABLE `user_user_permissions` (
 -- task
 CREATE TABLE `task` (
   `id` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '内部主键 UUID；对外请用 task_no',
-  `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '任务状态；needs_manual=等用户手动框选水印',
+  `status` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '任务状态；worker_offline 为内部接力状态，用户端保持原阶段',
   `original_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '原片 OSS 对象键',
   `mask_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'mask 图 OSS 对象键',
   `result_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '成片 OSS 对象键',
@@ -122,9 +122,10 @@ CREATE TABLE `task` (
   `height` int NOT NULL COMMENT '画面高度（像素）',
   `fps` double NOT NULL COMMENT '帧率',
   `params` json NOT NULL COMMENT '处理参数；自动定位失败时存 bbox 与候选框',
+  `checkpoints` json NOT NULL COMMENT '已上报的处理阶段及 OSS 产物；接力 worker 按此恢复',
   `metrics` json NOT NULL COMMENT '验收指标：残留/纹理/闪烁三项及 all_green',
   `lease_expires_at` datetime(6) DEFAULT NULL COMMENT '租约到期时间；超时由 reclaim_leases 打回队列',
-  `attempt` int NOT NULL COMMENT '已被 worker 领取的次数，上限见 MAX_ATTEMPT',
+  `attempt` int NOT NULL COMMENT '当前阶段连续领取次数；阶段检查点成功后重置',
   `progress` double NOT NULL COMMENT '处理进度 0~1',
   `points_cost` int NOT NULL COMMENT '本单预扣积分数',
   `refunded_at` datetime(6) DEFAULT NULL COMMENT '积分退还时间；非空表示已退款',
@@ -148,8 +149,8 @@ CREATE TABLE `task` (
 -- task_event
 CREATE TABLE `task_event` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '内部自增主键，不对外暴露',
-  `from_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变更前状态；首次创建为空',
-  `to_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变更后状态',
+  `from_status` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变更前状态；首次创建为空',
+  `to_status` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变更后状态',
   `actor` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '触发者：system / 用户名 / worker 名',
   `detail` json NOT NULL COMMENT '附加信息：错误码、重试标记、耗时等',
   `created_at` datetime(6) NOT NULL COMMENT '事件发生时间',
@@ -169,7 +170,7 @@ CREATE TABLE `worker_node` (
   `capabilities` json NOT NULL COMMENT '能力声明：设备、显存、支持的分辨率等',
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '节点状态：online / offline / disabled',
   `max_concurrency` int NOT NULL COMMENT '同时可领取的任务数上限',
-  `last_heartbeat_at` datetime(6) DEFAULT NULL COMMENT '最近心跳时间；超时由 reclaim_leases 回收租约',
+  `last_heartbeat_at` datetime(6) DEFAULT NULL COMMENT '最近进程级 alive 上报时间；超过 60 秒判离线',
   `created_at` datetime(6) NOT NULL COMMENT '节点创建时间',
   `worker_no` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '对外节点号 W+日期+随机',
   PRIMARY KEY (`id`),

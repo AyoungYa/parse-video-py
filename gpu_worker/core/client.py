@@ -65,6 +65,9 @@ class CloudClient:
         return resp
 
     # ---- 协议四件 ----
+    def alive(self) -> None:
+        self._post("alive", {}, timeout=5)
+
     def claim(self, capabilities: dict[str, Any] | None = None) -> dict | None:
         """长轮询领任务。无任务返回 None。
 
@@ -96,6 +99,18 @@ class CloudClient:
             payload["progress"] = round(progress, 4)
         resp = self._post("heartbeat", payload)
         return int(resp.json().get("lease_seconds", 90))
+
+    def release(self, task_id: str) -> dict:
+        """计划重启时归还租约，任务立即回队列。"""
+        return self._post("release", {"task_id": task_id}).json()
+
+    def checkpoint(self, task_id: str, stage: str, metrics: dict | None = None) -> dict:
+        return self._post(
+            "checkpoint", {"task_id": task_id, "stage": stage, "metrics": metrics or {}}
+        ).json()
+
+    def frame(self, task_id: str, index: int) -> dict:
+        return self._post("frame", {"task_id": task_id, "index": index}).json()
 
     def complete(self, task_id: str, result_key: str, metrics: dict, report_key: str = "") -> dict:
         return self._post(

@@ -26,6 +26,7 @@ from apps.bizno import (
 class TaskStatus(models.TextChoices):
     AWAITING_UPLOAD = "awaiting_upload", "待上传"
     PENDING = "pending", "待处理"
+    WORKER_OFFLINE = "worker_offline", "处理节点离线"
     LEASED = "leased", "已领取"
     EXTRACTING_FRAMES = "extracting_frames", "提取关键帧"
     LOCATING_WATERMARK = "locating_watermark", "定位水印"
@@ -81,7 +82,7 @@ class WorkerNode(models.Model):
     )
     last_heartbeat_at = models.DateTimeField(
         null=True, blank=True,
-        db_comment="最近心跳时间；超时由 reclaim_leases 回收租约",
+        db_comment="最近进程级 alive 上报时间；超过 60 秒判离线",
     )
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -125,7 +126,7 @@ class Task(models.Model):
     )
     status = models.CharField(
         max_length=24, choices=TaskStatus.choices, default=TaskStatus.AWAITING_UPLOAD,
-        db_comment="任务状态；定位后等待用户确认再去水印",
+        db_comment="任务状态；worker_offline 为内部接力状态，用户端保持原阶段",
     )
 
     # OSS 对象键（不含 bucket）
@@ -157,6 +158,10 @@ class Task(models.Model):
         "处理参数", default=dict, blank=True,
         db_comment="处理参数；自动定位失败时存 bbox 与候选框",
     )
+    checkpoints = models.JSONField(
+        "阶段检查点", default=dict, blank=True,
+        db_comment="已上报的处理阶段及 OSS 产物；接力 worker 按此恢复",
+    )
     metrics = models.JSONField(
         "验收指标", default=dict, blank=True,
         db_comment="验收指标：残留/纹理/闪烁三项及 all_green",
@@ -171,7 +176,7 @@ class Task(models.Model):
         null=True, blank=True,
         db_comment="租约到期时间；超时由 reclaim_leases 打回队列",
     )
-    attempt = models.IntegerField("已领取次数", default=0, db_comment="已被 worker 领取的次数，上限见 MAX_ATTEMPT")
+    attempt = models.IntegerField("当前阶段尝试次数", default=0, db_comment="当前阶段连续领取次数；阶段检查点成功后重置")
     progress = models.FloatField("进度 0~1", default=0, db_comment="处理进度 0~1")
 
     points_cost = models.IntegerField("预扣积分", default=0, db_comment="本单预扣积分数")
@@ -235,11 +240,11 @@ class TaskEvent(models.Model):
         db_comment="所属任务 ID（逻辑外键，不建 DB 约束）",
     )
     from_status = models.CharField(
-        max_length=20, blank=True, default="",
+        max_length=24, blank=True, default="",
         db_comment="变更前状态；首次创建为空",
     )
     to_status = models.CharField(
-        max_length=20,
+        max_length=24,
         db_comment="变更后状态",
     )
     actor = models.CharField(

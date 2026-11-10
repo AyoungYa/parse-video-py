@@ -5,7 +5,7 @@
 
 from django.core.management.base import BaseCommand
 
-from apps.tasks.services.lease import reclaim_expired_leases
+from apps.tasks.services.lease import mark_offline_workers, reclaim_expired_leases
 
 
 class Command(BaseCommand):
@@ -15,7 +15,8 @@ class Command(BaseCommand):
         parser.add_argument("--batch", type=int, default=100)
 
     def handle(self, *args, **options):
+        offline = mark_offline_workers(batch=options["batch"])
         stats = reclaim_expired_leases(batch=options["batch"])
         self.stdout.write(
-            self.style.SUCCESS(f"回收 {stats['reclaimed']} 个，判失败 {stats['failed']} 个")
+            self.style.SUCCESS(f"节点离线 {offline['offline']} 个，接力任务 {offline['released']} 个；回收 {stats['reclaimed']} 个，判失败 {stats['failed']} 个")
         )

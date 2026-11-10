@@ -33,7 +33,7 @@ class Command(BaseCommand):
                 continue
             oss.delete_task_objects(task)
             Task.objects.filter(pk=task.pk).update(
-                original_key="", result_key="", mask_key="", report_key=""
+                original_key="", result_key="", mask_key="", report_key="", checkpoints={}
             )
             deleted += 1
         self.stdout.write(self.style.SUCCESS(f"清理 {deleted} 个任务的对象"))

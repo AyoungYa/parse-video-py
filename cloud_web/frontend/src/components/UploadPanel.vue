@@ -20,6 +20,14 @@ const report = ref<PreflightReport | null>(null);
 const errorMsg = ref("");
 const stage = ref("");
 const inputRef = ref<HTMLInputElement | null>(null);
+const localVideoUrl = ref("");
+const showPreviewPlayer = ref(false);
+
+function releaseVideoUrl() {
+  if (localVideoUrl.value) URL.revokeObjectURL(localVideoUrl.value);
+  localVideoUrl.value = "";
+  showPreviewPlayer.value = false;
+}
 
 const maxSecondsText = computed(() => {
   const s = props.quota?.max_seconds ?? 30;
@@ -84,9 +92,11 @@ async function handleFile(file: File) {
   if (probing.value || uploading.value) return;
   errorMsg.value = "";
   report.value = null;
+  releaseVideoUrl();
   probing.value = true;
   try {
     report.value = await preflight(file, props.quota);
+    localVideoUrl.value = URL.createObjectURL(file);
   } catch {
     errorMsg.value = "读取视频失败，请换一个文件";
   } finally {
@@ -95,6 +105,7 @@ async function handleFile(file: File) {
 }
 
 function reset() {
+  releaseVideoUrl();
   report.value = null;
   errorMsg.value = "";
   uploadRatio.value = 0;
@@ -122,6 +133,7 @@ async function submit() {
     stage.value = "上传中";
     await uploadToOss(sign.upload, r.file, (p) => {
       uploadRatio.value = p;
+      if (p >= 1) stage.value = "等待对象存储确认";
     });
 
     stage.value = "提交处理";
@@ -143,7 +155,7 @@ async function submit() {
 }
 
 onMounted(() => window.addEventListener("paste", onPaste));
-onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
+onBeforeUnmount(() => { window.removeEventListener("paste", onPaste); releaseVideoUrl(); });
 </script>
 
 <template>
@@ -163,13 +175,15 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
       {{ formatSize((report?.file.size ?? 0) * uploadRatio) }} / {{ formatSize(report?.file.size ?? 0) }}
       　直传对象存储，不经过我们的服务器
     </p>
+    <video v-if="localVideoUrl" class="upload-preview" :src="localVideoUrl" :poster="report?.thumb || undefined" controls playsinline preload="metadata" aria-label="播放待上传的视频" />
   </div>
 
   <!-- 预检卡 -->
   <div v-else-if="report" class="card panel">
     <div class="head">
       <div class="thumb">
-        <img v-if="report.thumb" :src="report.thumb" alt="视频首帧" />
+        <video v-if="showPreviewPlayer && localVideoUrl" :src="localVideoUrl" controls autoplay playsinline aria-label="播放待上传的视频" />
+        <button v-else-if="report.thumb" class="thumb-play" type="button" aria-label="播放待上传的视频" @click="showPreviewPlayer = true"><img :src="report.thumb" alt="视频首帧" /><span>▶</span></button>
         <span v-else class="micro muted">无预览</span>
       </div>
       <div class="grow">
@@ -269,6 +283,10 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
 .panel {
   padding: var(--sp-5);
 }
+.upload-preview { display: block; width: 100%; max-height: 340px; margin-top: 18px; border-radius: 12px; background: #142620; }
+.thumb-play { position: relative; display: block; width: 100%; height: 100%; padding: 0; border: 0; cursor: pointer; background: #142620; }
+.thumb-play img { width: 100%; height: 100%; object-fit: cover; }
+.thumb-play span { position: absolute; inset: 0; display: grid; place-items: center; color: white; font-size: 24px; text-shadow: 0 2px 10px #102a25; }
 
 /* ── 拖拽区 ─────────────────────────────── */
 .drop {
@@ -360,6 +378,7 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
   height: 100%;
   object-fit: cover;
 }
+.thumb video { width: 100%; height: 100%; object-fit: cover; }
 
 .filename {
   font-size: var(--fs-small);

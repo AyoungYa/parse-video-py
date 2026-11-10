@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from core.models import LocalTask
 from core.pipeline import Pipeline
-from core.runner import Runner, build_client
+from core.runner import AliveReporter, Runner, build_client
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ class Command(BaseCommand):
         client = build_client()
         pipeline = Pipeline(device=options.get("device"))
         runner = Runner(client, pipeline)
+        alive = AliveReporter(build_client())
+        alive.start()
 
         def _graceful(signum, _frame):
             self.stdout.write(self.style.WARNING(f"收到信号 {signum}，准备退出…"))
@@ -54,18 +56,22 @@ class Command(BaseCommand):
         signal.signal(signal.SIGINT, _graceful)
         signal.signal(signal.SIGTERM, _graceful)
 
-        if options["dry_run"]:
-            payload = client.claim(runner.capabilities())
-            if not payload:
-                self.stdout.write("当前没有待处理任务")
+        try:
+            if options["dry_run"]:
+                payload = client.claim(runner.capabilities())
+                if not payload:
+                    self.stdout.write("当前没有待处理任务")
+                    return
+                self.stdout.write(f"领到任务 {payload['task_id']}，dry-run 直接上报失败")
+                client.fail(payload["task_id"], "DRY_RUN", "dry-run 模式不实际处理", retryable=True)
                 return
-            self.stdout.write(f"领到任务 {payload['task_id']}，dry-run 直接上报失败")
-            client.fail(payload["task_id"], "DRY_RUN", "dry-run 模式不实际处理", retryable=True)
-            return
 
-        if options["once"]:
-            runner.run_once()
-            return
+            if options["once"]:
+                runner.run_once()
+                return
 
-        self.stdout.write(self.style.SUCCESS("主循环启动，Ctrl+C 退出"))
-        runner.run_forever()
+            self.stdout.write(self.style.SUCCESS("主循环启动，Ctrl+C 退出"))
+            runner.run_forever()
+        finally:
+            alive.stop()
+            alive.join(timeout=6)

@@ -24,6 +24,28 @@ from .pipeline import Aborted, Pipeline, PipelineError
 logger = logging.getLogger(__name__)
 
 
+class AliveReporter(threading.Thread):
+    """进程级心跳；空闲、长轮询及处理任务时都运行。"""
+
+    def __init__(self, client: CloudClient, interval: int = 10):
+        super().__init__(daemon=True, name="worker-alive")
+        self.client = client
+        self.interval = interval
+        self._done = threading.Event()
+
+    def stop(self) -> None:
+        self._done.set()
+
+    def run(self) -> None:
+        while not self._done.is_set():
+            try:
+                self.client.alive()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("存活上报失败，下轮重试：%s", exc)
+            if self._done.wait(self.interval):
+                return
+
+
 class _Heartbeat(threading.Thread):
     """独立心跳线程。持有进度快照，定期续租。"""
 
@@ -109,8 +131,16 @@ class Runner:
                 time.sleep(10)
 
     def run_once(self) -> None:
+        self.pipeline.abort_event.clear()
         payload = self.client.claim(self.capabilities())
         if not payload:
+            return
+
+        if not self._running:
+            try:
+                self.client.release(payload["task_id"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("退出时归还刚领取的任务失败，等待租约自动回收：%r", exc)
             return
 
         task_id = payload["task_id"]
@@ -128,7 +158,6 @@ class Runner:
         )
         logger.info("领到任务 %s（时长 %.1fs）", task_id, local.duration_seconds)
 
-        self.pipeline.abort_event.clear()
         hb = _Heartbeat(self.client, task_id, self.pipeline, settings.HEARTBEAT_INTERVAL)
         hb.start()
         started = time.monotonic()
@@ -152,23 +181,40 @@ class Runner:
 
         try:
             if payload.get("phase") == "prepare":
-                frames, bbox, candidates = self.pipeline.prepare(payload, on_progress)
-                for url, frame in zip(payload["keyframe_upload_urls"], frames, strict=True):
-                    self.pipeline.upload(url, frame, content_type="image/jpeg")
+                def upload_frame(index: int, frame) -> None:
+                    self.pipeline.upload(payload["keyframe_upload_urls"][index], frame, content_type="image/jpeg")
+                    self.client.frame(task_id, index)
+
+                _, bbox, candidates = self.pipeline.prepare(payload, on_progress, upload_frame)
                 hb.stop()
                 self.client.prepared(task_id, bbox, candidates)
                 LocalTask.objects.filter(pk=local.pk).update(stage="awaiting_confirmation", progress=0)
                 return
-            outcome = self.pipeline.run(payload, on_progress)
+            def save_checkpoint(stage: str, artifact, metrics: dict, stage_result) -> None:
+                if self.pipeline.abort_event.is_set():
+                    raise Aborted("租约丢失，中止上传阶段产物")
+                url = (payload.get("checkpoint_upload_urls") or {}).get(stage)
+                if not url:
+                    raise PipelineError("CHECKPOINT_URL_MISSING", f"阶段 {stage} 缺少上传地址")
+                content_type = (
+                    "application/json" if stage in ("verify", "verify_final")
+                    else "image/png" if stage == "build_mask" else "video/mp4"
+                )
+                self.pipeline.upload(url, artifact, content_type=content_type)
+                self.client.checkpoint(task_id, stage, metrics)
+                StageLog.objects.create(
+                    task_id=task_id, stage=stage, exit_code=stage_result.exit_code,
+                    elapsed_seconds=round(stage_result.elapsed, 2), tail=stage_result.tail,
+                )
+
+            outcome = self.pipeline.run(payload, on_progress, save_checkpoint)
 
             for st in outcome.stages:
-                StageLog.objects.create(
-                    task_id=task_id,
-                    stage=st.name,
-                    exit_code=st.exit_code,
-                    elapsed_seconds=round(st.elapsed, 2),
-                    tail=st.tail,
-                )
+                if st.name not in ("build_mask", "lama_apply", "verify", "texture_fix", "texture_fix_rowinterp", "verify_final"):
+                    StageLog.objects.create(
+                        task_id=task_id, stage=st.name, exit_code=st.exit_code,
+                        elapsed_seconds=round(st.elapsed, 2), tail=st.tail,
+                    )
 
             on_progress("upload", 0.96)
             self.pipeline.upload(
@@ -203,6 +249,14 @@ class Runner:
 
         except Aborted:
             reason = hb.lost_reason or "本地主动中止"
+            if hb.lost_reason is None:
+                try:
+                    hb.stop()
+                    self.client.release(task_id)
+                except LeaseLost:
+                    logger.info("任务 %s 的租约已由云端收回", task_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("任务 %s 归还失败，等待租约超时自动回收：%r", task_id, exc)
             LocalTask.objects.filter(pk=local.pk).update(
                 status=LocalTask.Status.ABORTED,
                 stage="aborted",

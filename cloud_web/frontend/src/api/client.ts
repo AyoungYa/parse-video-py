@@ -63,6 +63,7 @@ export interface TaskDetail {
   /** 对外业务号，和 id（UUID）一样可以用来查询 */
   task_no: string;
   status: TaskStatus;
+  can_retry: boolean;
   progress: number;
   duration_seconds: number;
   size_bytes: number;
@@ -115,6 +116,7 @@ export type TaskStatus =
 export interface TaskListItem {
   id: string;
   status: TaskStatus;
+  bbox_confirmed: boolean;
   progress: number;
   duration_seconds: number;
   width: number;
@@ -181,6 +183,7 @@ export const api = {
   taskDetail: (taskId: string) => http.get<TaskDetail>(`/tasks/${taskId}`),
   taskList: () => http.get<TaskListItem[]>("/tasks"),
   cancelTask: (taskId: string) => http.post(`/tasks/${taskId}/cancel`),
+  retryTask: (taskId: string) => http.post(`/tasks/${taskId}/retry`),
   /** 手动框选水印位置后重新入队。仅 needs_manual 状态可提交，不会重复扣分。 */
   submitBbox: (taskId: string, bbox: [number, number, number, number]) =>
     http.post<{ ok: boolean; task_id: string; status: TaskStatus; bbox: number[] }>(
@@ -210,11 +213,20 @@ export function uploadToOss(
     form.append("file", file);
 
     const xhr = new XMLHttpRequest();
+    let confirmationTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearConfirmationTimer = () => {
+      if (confirmationTimer) clearTimeout(confirmationTimer);
+      confirmationTimer = undefined;
+    };
     xhr.open("POST", policy.host, true);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      if (e.lengthComputable && e.loaded === e.total && !confirmationTimer) {
+        confirmationTimer = setTimeout(() => xhr.abort(), 60_000);
+      }
     };
     xhr.onload = () => {
+      clearConfirmationTimer();
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(1);
         resolve();
@@ -222,7 +234,14 @@ export function uploadToOss(
         reject(new Error(`上传失败（${xhr.status}），请检查网络后重试`));
       }
     };
-    xhr.onerror = () => reject(new Error("上传中断，请检查网络后重试"));
+    xhr.onerror = () => {
+      clearConfirmationTimer();
+      reject(new Error("上传中断，请检查网络后重试"));
+    };
+    xhr.onabort = () => {
+      clearConfirmationTimer();
+      reject(new Error("文件已传完，但对象存储未在 60 秒内确认；请检查网络后重试"));
+    };
     xhr.ontimeout = () => reject(new Error("上传超时，请重试"));
     xhr.send(form);
   });

@@ -90,11 +90,15 @@ class Pipeline:
         self.device = device or settings.TORCH_DEVICE
         self.python = python or settings.WM_PYTHON
         self.abort_event = threading.Event()
+        self._active_proc: subprocess.Popen | None = None
 
     # ------------------------------------------------------------------
     # 对外主入口
     # ------------------------------------------------------------------
-    def prepare(self, payload: dict, on_progress: ProgressFn) -> tuple[list[Path], list[int], list[dict]]:
+    def prepare(
+        self, payload: dict, on_progress: ProgressFn,
+        on_frame: Callable[[int, Path], None] | None = None,
+    ) -> tuple[list[Path], list[int], list[dict]]:
         """只抽关键帧和定位水印；用户确认前不运行修复。"""
         task_id = payload["task_id"]
         work = self.workspace / task_id
@@ -111,12 +115,22 @@ class Pipeline:
         for index, frame in enumerate(frames):
             if self.abort_event.is_set():
                 raise Aborted("租约丢失")
+            resume_url = (payload.get("keyframe_resume_urls") or {}).get(str(index))
+            if resume_url:
+                try:
+                    self._download(resume_url, frame)
+                    on_progress("extracting_frames", 0.1 + (index + 1) * 0.08)
+                    continue
+                except requests.RequestException:
+                    frame.unlink(missing_ok=True)
             sample_at = min(duration * (0.1 + index * 0.4), max(0.0, duration - 0.1))
             cmd = ["ffmpeg", "-y", "-ss", str(sample_at), "-i", str(video),
                    "-frames:v", "1", str(frame)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
             if result.returncode or not frame.exists():
                 raise PipelineError("KEYFRAME_FAILED", result.stderr[-800:], retryable=True)
+            if on_frame is not None:
+                on_frame(index, frame)
             on_progress("extracting_frames", 0.1 + (index + 1) * 0.08)
         on_progress("locating_watermark", 0.35)
         stage = next(s for s in settings.WM_STAGES_TEMPLATE if s["name"] == "build_mask")
@@ -134,7 +148,10 @@ class Pipeline:
             bbox = [int(v) for v in bbox_text.split()]
         return frames, bbox, candidates
 
-    def run(self, payload: dict, on_progress: ProgressFn) -> PipelineOutcome:
+    def run(
+        self, payload: dict, on_progress: ProgressFn,
+        on_checkpoint: Callable[[str, Path, dict, StageResult], None] | None = None,
+    ) -> PipelineOutcome:
         if not (payload.get("params") or {}).get("bbox_confirmed"):
             raise PipelineError("BBOX_UNCONFIRMED", "水印位置尚未由用户确认", retryable=False)
         task_id = payload["task_id"]
@@ -147,6 +164,7 @@ class Pipeline:
         out = work / "output.mp4"
         out_fixed = work / "output_fixed.mp4"
         report = work / "report.json"
+        report_final = work / "report_final.json"
 
         try:
             on_progress("download", 0.02)
@@ -154,6 +172,16 @@ class Pipeline:
 
             if payload.get("mask_url"):
                 self._download(payload["mask_url"], mask)
+
+            resume_files = {
+                "build_mask": mask, "lama_apply": out, "verify": report,
+                "texture_fix": out_fixed, "texture_fix_rowinterp": out_fixed,
+                "verify_final": report_final,
+            }
+            for name, url in (payload.get("checkpoint_get_urls") or {}).items():
+                if name in resume_files:
+                    self._download(url, resume_files[name])
+                    logger.info("从 OSS 恢复阶段 %s", name)
 
             bbox = self._bbox_str(payload.get("params") or {})
             ctx = {
@@ -176,6 +204,10 @@ class Pipeline:
             for idx, stage in enumerate(stages):
                 if self.abort_event.is_set():
                     raise Aborted("租约丢失，中止处理")
+                if stage["name"] == "lama_apply" and out.exists():
+                    continue
+                if stage["name"] == "verify" and report.exists():
+                    continue
                 on_progress(stage["name"], 0.05 + idx / total * 0.9)
 
                 def stage_progress(frac: float, _idx=idx, _total=total) -> None:
@@ -206,6 +238,14 @@ class Pipeline:
                 if stage["name"] == "lama_apply" and not out.exists():
                     raise PipelineError("NO_OUTPUT", f"渲染结束但 {out} 不存在", retryable=True)
 
+                artifact = {"build_mask": mask, "lama_apply": out, "verify": report}.get(stage["name"])
+                if artifact is not None:
+                    if not artifact.exists():
+                        raise PipelineError("NO_OUTPUT", f"阶段 {stage['name']} 未生成产物", retryable=True)
+                    if on_checkpoint is not None:
+                        metrics_now = self._read_report(report) if stage["name"] == "verify" else {}
+                        on_checkpoint(stage["name"], artifact, metrics_now, result)
+
                 # build_mask 自动定位后回填最终 bbox（lama/verify/修复轮都要用）
                 if stage["name"] == "build_mask":
                     ctx["bbox"] = self._bbox_from_output(result.tail) or ctx["bbox"]
@@ -217,6 +257,7 @@ class Pipeline:
 
             # ---- 决策树修复轮（坑 44）：不绿 → 按诊断追加一次修复 + 复验 ----
             final_out = out
+            final_report = report
             repair_name = {"needs_texture": "texture_fix", "needs_rowinterp": "texture_fix_rowinterp"}
             diagnosis = (metrics or {}).get("diagnosis")
             if diagnosis in settings.WM_REPAIR_STAGES and not metrics.get("all_green"):
@@ -225,27 +266,41 @@ class Pipeline:
                     "name": repair_name[diagnosis],
                     "cmd": settings.WM_REPAIR_STAGES[diagnosis],
                 }
-                res = self._run_stage(repair_stage, ctx, lambda f: on_progress(repair_name[diagnosis], 0.05 + 0.9 * min(1.0, f)))
-                stage_results.append(res)
+                repair_restored = out_fixed.exists()
+                if repair_restored:
+                    res = StageResult(repair_name[diagnosis], 0, 0.0, "从检查点恢复")
+                else:
+                    res = self._run_stage(repair_stage, ctx, lambda f: on_progress(repair_name[diagnosis], 0.05 + 0.9 * min(1.0, f)))
+                    stage_results.append(res)
                 if res.exit_code != 0:
                     # 修复失败不判整个任务死刑：交付第一轮成片 + 原始诊断
                     logger.warning("修复轮失败（exit %s），回退第一轮成片", res.exit_code)
                 elif out_fixed.exists():
+                    if on_checkpoint is not None and not repair_restored:
+                        on_checkpoint(repair_name[diagnosis], out_fixed, {}, res)
                     reverify = {"name": "verify_final", "cmd": settings.WM_REVERIFY_CMD}
-                    res2 = self._run_stage(reverify, ctx, lambda f: on_progress("verify_final", 0.05 + 0.9 * min(1.0, f)))
-                    stage_results.append(res2)
-                    m2 = self._read_report(report)
+                    final_restored = report_final.exists()
+                    if final_restored:
+                        res2 = StageResult("verify_final", 0, 0.0, "从检查点恢复")
+                    else:
+                        reverify_ctx = {**ctx, "report": str(report_final)}
+                        res2 = self._run_stage(reverify, reverify_ctx, lambda f: on_progress("verify_final", 0.05 + 0.9 * min(1.0, f)))
+                        stage_results.append(res2)
+                    m2 = self._read_report(report_final)
                     if res2.exit_code == 0 and m2:
+                        if on_checkpoint is not None and not final_restored:
+                            on_checkpoint("verify_final", report_final, m2, res2)
                         # 两轮都不绿时，交付「评分更好」的那份
                         if m2.get("all_green") or self._score(m2) >= self._score(metrics):
                             final_out = out_fixed
+                            final_report = report_final
                             metrics = m2
                             logger.info("修复轮生效：diagnosis=%s", m2.get("diagnosis"))
                         else:
                             logger.info("修复轮未改善（%s → %s），保留第一轮",
                                         metrics.get("diagnosis"), m2.get("diagnosis"))
 
-            return PipelineOutcome(out_path=final_out, report_path=report,
+            return PipelineOutcome(out_path=final_out, report_path=final_report,
                                    metrics=metrics, stages=stage_results)
         except Aborted:
             raise
@@ -258,6 +313,9 @@ class Pipeline:
 
     def abort(self) -> None:
         self.abort_event.set()
+        proc = self._active_proc
+        if proc is not None and proc.poll() is None:
+            _kill(proc)
 
     def cleanup(self, task_id: str) -> None:
         shutil.rmtree(self.workspace / task_id, ignore_errors=True)
@@ -291,6 +349,7 @@ class Pipeline:
             creationflags=_creation_flags(),
         )
         assert proc.stdout is not None
+        self._active_proc = proc
 
         try:
             for line in proc.stdout:
@@ -306,7 +365,10 @@ class Pipeline:
                     _kill(proc)
                     raise Aborted("租约丢失，已终止本地渲染")
             proc.wait()
+            if self.abort_event.is_set():
+                raise Aborted("处理进程已中止")
         finally:
+            self._active_proc = None
             if proc.poll() is None:
                 _kill(proc)
 

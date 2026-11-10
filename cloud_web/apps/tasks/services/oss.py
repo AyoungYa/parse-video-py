@@ -73,7 +73,9 @@ def mask_key(task_id: str) -> str:
     return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/mask.png"
 
 
-def keyframe_key(task_id: str, index: int = 0) -> str:
+def keyframe_key(task_id: str, index: int = 0, run_id: str = "") -> str:
+    if run_id:
+        return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/keyframes/{run_id}/keyframe-{index}.jpg"
     return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/keyframe-{index}.jpg"
 
 
@@ -83,6 +85,21 @@ def result_key(task_id: str) -> str:
 
 def report_key(task_id: str) -> str:
     return f"{settings.OSS_RESULT_PREFIX}{task_id}/report.json"
+
+
+CHECKPOINT_FILES = {
+    "build_mask": "mask.png",
+    "lama_apply": "output.mp4",
+    "verify": "report.json",
+    "texture_fix": "output_fixed.mp4",
+    "texture_fix_rowinterp": "output_fixed.mp4",
+    "verify_final": "report_final.json",
+}
+
+
+def checkpoint_key(task_id: str, stage: str, run_id: str = "") -> str:
+    prefix = f"{settings.OSS_UPLOAD_PREFIX}{task_id}/checkpoints/"
+    return f"{prefix}{run_id + '/' if run_id else ''}{CHECKPOINT_FILES[stage]}"
 
 
 def build_post_policy(task_id: str, key: str) -> dict:
@@ -171,6 +188,21 @@ def delete_object(key: str) -> None:
 
 
 def delete_task_objects(task) -> None:
+    checkpoints = task.checkpoints or {}
+    run_ids = checkpoints.get("_run_ids") or []
+    checkpoint_keys = {
+        checkpoint_key(str(task.id), stage, run_id)
+        for run_id in ("", *run_ids) for stage in CHECKPOINT_FILES
+    }
+    checkpoint_keys.update(
+        entry["key"] for entry in checkpoints.values()
+        if isinstance(entry, dict) and isinstance(entry.get("key"), str)
+    )
+    frame_keys = {
+        keyframe_key(str(task.id), i, run_id)
+        for run_id in run_ids for i in range(3)
+    }
+    frame_keys.update((checkpoints.get("keyframes") or {}).values())
     for key in (task.original_key, task.mask_key, task.result_key, task.report_key,
-                *(keyframe_key(str(task.id), i) for i in range(3))):
+                *(keyframe_key(str(task.id), i) for i in range(3)), *frame_keys, *checkpoint_keys):
         delete_object(key)

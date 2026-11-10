@@ -16,7 +16,21 @@ const meta = computed(() => {
   const w = props.task.width;
   const h = props.task.height;
   if (!w || !h) return "";
-  return `${h > w ? "竖屏" : "横屏"} ${w}×${h}`;
+  return `${h > w ? "竖屏" : "横屏"} · ${w}×${h}`;
+});
+
+const summary = computed(() => {
+  switch (props.task.status) {
+    case "succeeded": return "处理完成，查看结果";
+    case "failed": return "处理未完成，查看详情";
+    case "cancelled": return "任务已取消";
+    case "expired": return "素材已过期";
+    case "awaiting_confirmation":
+    case "needs_manual": return "等待确认水印位置";
+    case "pending":
+    case "leased": return props.task.bbox_confirmed ? "等待继续去水印" : "等待算力节点处理";
+    default: return "正在处理视频";
+  }
 });
 
 function open() {
@@ -27,14 +41,15 @@ function open() {
 <template>
   <button class="chip" type="button" @click="open">
     <div class="chip-top">
-      <TaskStatusPill :status="task.status" :progress="task.progress" />
-      <span class="micro muted num">{{ meta }}</span>
+      <TaskStatusPill :status="task.status" :progress="task.progress" :confirmed="task.bbox_confirmed" />
+      <span class="chip-arrow" aria-hidden="true">↗</span>
     </div>
     <div class="chip-title">{{ title }}</div>
+    <div v-if="meta" class="chip-meta micro muted num">{{ meta }}</div>
     <div v-if="task.status === 'running' || task.status === 'removing_watermark'" class="bar" style="margin-top: 9px">
       <i :style="{ width: `${Math.max(3, task.progress * 100)}%` }" />
     </div>
-    <div v-else class="chip-foot micro muted num">{{ task.finished_at ? "已交付" : task.status === "awaiting_confirmation" ? "等待确认水印" : "处理中" }}</div>
+    <div class="chip-foot micro muted">{{ summary }}</div>
   </button>
 </template>
 
@@ -46,15 +61,16 @@ function open() {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
-  padding: 13px;
+  padding: 16px;
   cursor: pointer;
   font-family: inherit;
-  transition: border-color 0.16s, box-shadow 0.16s;
+  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
 }
 
 .chip:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow-card);
+  transform: translateY(-2px);
 }
 
 .chip-top {
@@ -62,11 +78,18 @@ function open() {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 9px;
+  margin-bottom: 15px;
+}
+
+.chip-arrow {
+  color: var(--ink-300);
+  font-size: 20px;
+  line-height: 1;
 }
 
 .chip-title {
-  font-size: var(--fs-small);
+  font-size: var(--fs-body);
+  font-weight: 600;
   color: var(--ink-900);
   white-space: nowrap;
   overflow: hidden;
@@ -74,6 +97,10 @@ function open() {
 }
 
 .chip-foot {
-  margin-top: 6px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
+
+.chip-meta { margin-top: 4px; }
 </style>

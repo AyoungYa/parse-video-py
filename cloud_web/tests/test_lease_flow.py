@@ -83,6 +83,11 @@ class LeaseFlowTest(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, TaskStatus.EXTRACTING_FRAMES)
         with patch("apps.tasks.views_worker.oss.object_exists", return_value=True):
+            for index in range(3):
+                frame_response = self.client.post("/api/v1/worker/frame", {
+                    "task_id": str(task.id), "index": index,
+                }, format="json", **self.auth)
+                self.assertEqual(frame_response.status_code, 200)
             r = self.client.post("/api/v1/worker/prepared", {
                 "task_id": str(task.id), "bbox": [100, 50, 300, 120],
             }, format="json", **self.auth)
@@ -136,6 +141,100 @@ class LeaseFlowTest(TestCase):
             "/api/v1/worker/claim", {}, format="json", HTTP_X_WORKER_TOKEN="wkr_bogus"
         )
         self.assertEqual(r.status_code, 401)
+
+    @patch("apps.tasks.views_worker.oss.presign_put", return_value="https://oss/put")
+    @patch("apps.tasks.views_worker.oss.presign_get", return_value="https://oss/get")
+    def test_restart_releases_only_owned_task_without_spending_attempt(self, _get, _put):
+        task = _make_pending_task(self.user)
+        self.client.post("/api/v1/worker/claim", {}, format="json", **self.auth)
+        other, other_token = make_worker("other-node")
+        denied = self.client.post(
+            "/api/v1/worker/release", {"task_id": str(task.id)}, format="json",
+            HTTP_X_WORKER_TOKEN=other_token,
+        )
+        self.assertEqual(denied.status_code, 409)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.LEASED)
+        released = self.client.post(
+            "/api/v1/worker/release", {"task_id": str(task.id)}, format="json", **self.auth,
+        )
+        self.assertEqual(released.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.PENDING)
+        self.assertIsNone(task.worker)
+        self.assertIsNone(task.lease_expires_at)
+        self.assertEqual(task.attempt, 0)
+        self.assertTrue(task.events.filter(to_status=TaskStatus.PENDING).exists())
+        again = self.client.post("/api/v1/worker/claim", {}, format="json", **self.auth)
+        self.assertEqual(again.data["task_id"], str(task.id))
+        task.refresh_from_db()
+        self.assertEqual(task.attempt, 1)
+
+    @patch("apps.tasks.views_worker.oss.presign_put", return_value="https://oss/put")
+    @patch("apps.tasks.views_worker.oss.presign_get", return_value="https://oss/get")
+    def test_claim_reclaims_expired_task_after_hard_crash(self, _get, _put):
+        task = _make_pending_task(self.user)
+        task.status = TaskStatus.RUNNING
+        task.worker = self.worker
+        task.attempt = 1
+        task.lease_expires_at = timezone.now() - timedelta(seconds=1)
+        task.save()
+        response = self.client.post("/api/v1/worker/claim", {}, format="json", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["task_id"], str(task.id))
+        task.refresh_from_db()
+        self.assertEqual(task.attempt, 2)
+
+    @patch("apps.tasks.services.oss.object_exists", return_value=True)
+    def test_checkpoint_reports_each_render_stage_and_rejects_other_worker(self, _exists):
+        task = _make_pending_task(self.user)
+        task.status = TaskStatus.REMOVING_WATERMARK
+        task.worker = self.worker
+        task.attempt = 2
+        task.lease_expires_at = timezone.now() + timedelta(minutes=5)
+        task.params = {"bbox_confirmed": True, "bbox": [10, 20, 100, 50]}
+        task.save()
+        other, other_token = make_worker("other-checkpoint-node")
+        denied = self.client.post(
+            "/api/v1/worker/checkpoint", {"task_id": str(task.id), "stage": "build_mask"},
+            format="json", HTTP_X_WORKER_TOKEN=other_token,
+        )
+        self.assertEqual(denied.status_code, 409)
+        for stage in ("build_mask", "lama_apply", "verify"):
+            response = self.client.post(
+                "/api/v1/worker/checkpoint",
+                {"task_id": str(task.id), "stage": stage, "metrics": {"all_green": True}},
+                format="json", **self.auth,
+            )
+            self.assertEqual(response.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(set(task.checkpoints), {"build_mask", "lama_apply", "verify"})
+        self.assertEqual(task.attempt, 0)
+        self.assertEqual(task.checkpoints["verify"]["metrics"], {"all_green": True})
+        self.assertEqual(task.events.filter(detail__checkpoint="verify").count(), 1)
+
+    @patch("apps.tasks.services.oss.object_exists", return_value=True)
+    def test_keyframe_report_persists_for_takeover(self, _exists):
+        task = _make_pending_task(self.user)
+        task.status = TaskStatus.EXTRACTING_FRAMES
+        task.worker = self.worker
+        task.attempt = 2
+        task.lease_expires_at = timezone.now() + timedelta(minutes=5)
+        task.checkpoints = {"_active_run_id": "first-run", "_run_ids": ["first-run"]}
+        task.save()
+        response = self.client.post(
+            "/api/v1/worker/frame", {"task_id": str(task.id), "index": 0},
+            format="json", **self.auth,
+        )
+        self.assertEqual(response.status_code, 200)
+        task.refresh_from_db()
+        from apps.tasks.services import oss
+        self.assertEqual(task.attempt, 0)
+        self.assertEqual(
+            task.checkpoints["keyframes"]["0"],
+            oss.keyframe_key(str(task.id), 0, "first-run"),
+        )
+        self.assertEqual(task.events.filter(detail__keyframe=0).count(), 1)
 
     def test_lease_expiry_requeues_task(self):
         task = _make_pending_task(self.user)
@@ -205,6 +304,48 @@ class LeaseFlowTest(TestCase):
         self.assertEqual(r.data["status"], TaskStatus.FAILED)
         task.refresh_from_db()
         self.assertEqual(get_balance(self.user), balance_before + task.points_cost)
+
+
+class RetryExistingTaskTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = _make_user_with_points(phone="13800000009")
+        self.client.force_authenticate(user=self.user)
+        self.task = Task.objects.create(
+            user=self.user,
+            status=TaskStatus.FAILED,
+            original_key="uploads/retry/source.mp4",
+            points_cost=1,
+            refunded_at=timezone.now(),
+            finished_at=timezone.now(),
+            attempt=3,
+            error_code="STAGE_FAILED",
+            error_message="Traceback: internal path",
+            checkpoints={"build_mask": {"key": "checkpoints/mask.png"}},
+        )
+
+    @patch("apps.tasks.views_user.oss.object_exists", return_value=True)
+    def test_retry_reuses_upload_and_checkpoints_without_charge(self, _exists):
+        balance = get_balance(self.user)
+        url = f"/api/v1/tasks/{self.task.id}/retry"
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 200)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TaskStatus.PENDING)
+        self.assertEqual(self.task.original_key, "uploads/retry/source.mp4")
+        self.assertIn("build_mask", self.task.checkpoints)
+        self.assertEqual(self.task.points_cost, 0)
+        self.assertEqual(self.task.attempt, 0)
+        self.assertIsNone(self.task.finished_at)
+        self.assertEqual(get_balance(self.user), balance)
+        self.assertEqual(self.client.post(url).status_code, 409)
+
+    @patch("apps.tasks.views_user.oss.object_exists", return_value=False)
+    def test_retry_requires_original_object(self, _exists):
+        response = self.client.post(f"/api/v1/tasks/{self.task.id}/retry")
+        self.assertEqual(response.status_code, 410)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TaskStatus.FAILED)
 
 
 class BillingTest(TestCase):

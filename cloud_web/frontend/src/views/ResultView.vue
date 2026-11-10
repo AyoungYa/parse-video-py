@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import CompareSlider from "@/components/CompareSlider.vue";
 import MetricReport from "@/components/MetricReport.vue";
 import TaskTimeline from "@/components/TaskTimeline.vue";
+import TaskStageContent from "@/components/TaskStageContent.vue";
 import { api, formatDuration, formatSize, type TaskDetail } from "@/api/client";
 import { useSiteStore } from "@/stores/site";
 
@@ -15,6 +16,7 @@ const taskId = String(route.params.id);
 const task = ref<TaskDetail | null>(null);
 const loadError = ref("");
 const cancelling = ref(false);
+const retrying = ref(false);
 const now = ref(Date.now());
 
 let pollTimer: number | undefined;
@@ -24,7 +26,7 @@ const TERMINAL = ["succeeded", "failed", "cancelled", "expired"];
 
 const isTerminal = computed(() => TERMINAL.includes(task.value?.status ?? ""));
 const isProcessing = computed(
-  () => !isTerminal.value && ["pending", "leased", "extracting_frames", "locating_watermark", "removing_watermark", "running", "verifying"].includes(task.value?.status ?? "")
+  () => !isTerminal.value && ["pending", "leased", "extracting_frames", "locating_watermark", "awaiting_confirmation", "needs_manual", "removing_watermark", "running", "verifying"].includes(task.value?.status ?? "")
 );
 
 const headline = computed(() => {
@@ -38,6 +40,7 @@ const headline = computed(() => {
   if (s === "locating_watermark") return "定位水印";
   if (s === "removing_watermark") return "去水印中";
   if (s === "verifying") return "验收中";
+  if ((s === "pending" || s === "leased") && task.value?.params?.bbox_confirmed) return "等待去水印";
   if (s === "running" || s === "leased") return "处理中";
   return "排队中";
 });
@@ -133,9 +136,16 @@ function again() {
   router.push({ name: "upload" });
 }
 
-function goMask() {
-  stopPolling();
-  router.push({ name: "mask-confirm", params: { id: taskId } });
+async function retry() {
+  if (retrying.value) return;
+  retrying.value = true;
+  try {
+    await api.retryTask(taskId);
+    await poll();
+    if (!pollTimer) pollTimer = window.setInterval(poll, 2000);
+  } finally {
+    retrying.value = false;
+  }
 }
 
 onMounted(() => {
@@ -193,17 +203,16 @@ onBeforeUnmount(() => {
         <TaskTimeline
           :status="task.status"
           :progress="task.progress"
-          :remaining-seconds="remainingSeconds"
-          :worker-offline="workerOffline"
           :confirmed="Boolean(task.params?.bbox_confirmed)"
         />
+        <TaskStageContent :task="task" :worker-offline="workerOffline" @updated="poll" />
         <hr class="divider" />
         <div class="row-between">
           <span class="micro muted">
-            处理在你自己的算力机上跑。页面可以关，回来还能看到进度。
+            页面可以关闭，回来还能看到进度。
           </span>
           <button
-            v-if="['pending', 'leased'].includes(task.status)"
+            v-if="['pending', 'leased', 'awaiting_confirmation', 'needs_manual'].includes(task.status)"
             class="link-btn"
             type="button"
             :disabled="cancelling"
@@ -214,34 +223,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- 自动定位没把握：转人工框选，任务没失败、积分也没退 -->
-      <div v-else-if="task.status === 'needs_manual' || task.status === 'awaiting_confirmation'" class="card manual">
-        <div class="row" style="gap: 10px; flex-wrap: wrap">
-          <span class="tag tag-warn">等你操作</span>
-          <span class="micro muted">任务已暂停，不会自动失败，也不会扣第二次积分</span>
-        </div>
-        <h2 class="h2" style="margin-top: 14px">请确认水印位置</h2>
-        <p class="small secondary" style="margin-top: 8px; line-height: 1.8">
-          请查看关键帧上的红框。位置准确可直接确认，也可以拖动红框或重新框选；确认后才会开始去水印。
-        </p>
-        <p v-if="task.locate_candidates?.length" class="micro muted" style="margin-top: 8px">
-          已经帮你找了 {{ task.locate_candidates.length }} 个候选位置，进去点一下就能用。
-        </p>
-        <div class="row" style="margin-top: 20px; gap: 10px; flex-wrap: wrap">
-          <button class="btn btn-primary" type="button" @click="goMask">确认或调整水印位置</button>
-          <button class="link-btn" type="button" :disabled="cancelling" @click="cancel">
-            {{ cancelling ? "取消中…" : "不处理了，取消并退积分" }}
-          </button>
-        </div>
-      </div>
-
       <!-- 成功 -->
       <template v-else-if="task.status === 'succeeded'">
+        <div class="card success-stage">
+          <TaskTimeline :status="task.status" :progress="1" :confirmed="true" />
+          <div class="success-heading"><span class="eyebrow">质量验收</span><h2 class="h2">原片与成片，对照查看</h2><p class="small secondary">拖动分割线查看同一画面中的修复效果，也可以切换为只看成片。</p></div>
         <div v-if="canCompare" class="compare-block">
           <CompareSlider :before="beforeUrl" :after="afterUrl" :aspect="aspect" />
         </div>
         <div v-else class="notice" style="margin-bottom: 16px">
           预览链接已过期，可以刷新页面重新获取，或直接下载成片。
+        </div>
         </div>
 
         <MetricReport
@@ -279,7 +271,10 @@ onBeforeUnmount(() => {
       <!-- 失败 / 取消 / 过期 -->
       <div v-else class="card">
         <p class="small" style="color: var(--ink-900)">
-          {{ task.error_message || (task.status === "expired" ? `素材已超过 ${site.retentionText} 保留期，已自动清理。` : "任务已结束。") }}
+          {{ task.status === "failed" ? "系统原因处理失败。" : task.error_message || (task.status === "expired" ? `素材已超过 ${site.retentionText} 保留期，已自动清理。` : "任务已结束。") }}
+        </p>
+        <p v-if="task.status === 'failed' && task.can_retry" class="small muted" style="margin-top: 8px">
+          原视频已保存，可直接重新处理，无需再次上传。
         </p>
         <p class="micro muted" style="margin-top: 8px">
           <template v-if="task.status === 'failed'">
@@ -290,7 +285,10 @@ onBeforeUnmount(() => {
           </template>
         </p>
         <div class="row" style="margin-top: 18px">
-          <button class="btn btn-primary" type="button" @click="again">重新上传</button>
+          <button v-if="task.status === 'failed' && task.can_retry" class="btn btn-primary" type="button" :disabled="retrying" @click="retry">
+            {{ retrying ? "正在重新排队…" : "重新处理" }}
+          </button>
+          <button v-else class="btn btn-primary" type="button" @click="again">上传新视频</button>
         </div>
       </div>
     </template>
@@ -319,6 +317,8 @@ onBeforeUnmount(() => {
 .compare-block {
   border-radius: var(--r-card);
 }
+.success-heading { padding: 24px 0 18px; border-top: 1px solid var(--line-soft); }
+.success-heading .h2 { margin: 7px 0; }
 
 .actions {
   display: flex;

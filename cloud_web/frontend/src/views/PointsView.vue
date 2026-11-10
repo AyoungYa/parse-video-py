@@ -131,8 +131,11 @@ onMounted(load);
 <template>
   <div class="page page-mid">
     <div class="head">
-      <h1 class="h1">账户</h1>
-      <p class="micro muted" style="margin-top: 4px">积分、签到与处理记录</p>
+      <div>
+        <h1 class="h1">账户</h1>
+        <p class="micro muted" style="margin-top: 4px">积分、签到与处理记录</p>
+      </div>
+      <router-link :to="{ name: 'upload' }" class="btn btn-secondary back-btn">← 回到工作台</router-link>
     </div>
 
     <div v-if="loadFailed" class="notice notice-bad">加载失败，请刷新页面重试。</div>
@@ -225,7 +228,16 @@ onMounted(load);
 }
 
 .head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: var(--sp-5);
+}
+.back-btn { white-space: nowrap; }
+@media (max-width: 480px) {
+  .head { align-items: flex-start; }
+  .back-btn { padding-left: 10px; padding-right: 10px; }
 }
 
 .balance {

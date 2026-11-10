@@ -277,15 +277,26 @@ def task_detail(request, task_id):
     if task.status == TaskStatus.SUCCEEDED:
         data["download_url"] = oss.presign_get(task.result_key, expire_seconds=600)
         data["report_url"] = oss.presign_get(task.report_key, expire_seconds=600) if task.report_key else ""
+    # 关键帧在提取时逐步上传；提前签名让任务页能在图片到达后直接轮播。
+    if data["status"] in (
+        TaskStatus.EXTRACTING_FRAMES, TaskStatus.LOCATING_WATERMARK,
+        TaskStatus.AWAITING_CONFIRMATION,
+    ):
+        saved_frames = (task.checkpoints or {}).get("keyframes") or {}
+        legacy = not (task.checkpoints or {}).get("_active_run_id")
+        data["keyframe_urls"] = [
+            oss.presign_get(key, expire_seconds=600)
+            for i in range(3)
+            if (key := saved_frames.get(str(i)) or (
+                oss.keyframe_key(str(task.id), i)
+                if legacy and data["status"] == TaskStatus.AWAITING_CONFIRMATION else ""
+            ))
+        ]
     # 人工框选：把候选框与建议尺寸一并给前端
     if task.status in (TaskStatus.NEEDS_MANUAL, TaskStatus.AWAITING_CONFIRMATION):
         params = task.params or {}
         data["locate_candidates"] = params.get("locate_candidates") or []
         data["locate_reason"] = task.error_message
-        data["keyframe_urls"] = [
-            oss.presign_get(oss.keyframe_key(str(task.id), i), expire_seconds=600)
-            for i in range(3)
-        ] if task.status == TaskStatus.AWAITING_CONFIRMATION else []
         # 框选页要按原视频尺寸换算坐标
         data["frame_width"] = task.width
         data["frame_height"] = task.height
@@ -317,3 +328,42 @@ def cancel_task(request, task_id):
 
     lease._refund_if_needed(task, reason="用户取消")
     return Response({"ok": True, "status": task.status})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def retry_task(request, task_id):
+    """失败后复用原片和检查点重新处理；已经退款的订单不再次扣费。"""
+    with transaction.atomic():
+        try:
+            task = Task.objects.select_for_update().get(**_task_filter(task_id), user=request.user)
+        except Task.DoesNotExist:
+            return Response({"code": "not_found", "message": "任务不存在"}, status=404)
+        if task.status != TaskStatus.FAILED:
+            return Response({"code": "invalid_state", "message": "只有处理失败的任务可以重新处理"}, status=409)
+        if task.points_cost and not task.refunded_at:
+            return Response({"code": "refund_pending", "message": "退款处理中，请稍后再试"}, status=409)
+        if not task.original_key or not oss.object_exists(task.original_key):
+            return Response({"code": "source_expired", "message": "原视频已清理，无法重新处理"}, status=410)
+
+        task.status = TaskStatus.PENDING
+        task.worker = None
+        task.lease_expires_at = None
+        task.finished_at = None
+        task.progress = 0
+        task.attempt = 0
+        task.error_code = ""
+        task.error_message = ""
+        checkpoints = dict(task.checkpoints or {})
+        checkpoints.pop("_retry_display_status", None)
+        checkpoints.pop("_offline_display_status", None)
+        task.checkpoints = checkpoints
+        if task.refunded_at:
+            task.points_cost = 0  # 退款后重试免费；历史积分流水仍保留
+        task.save(update_fields=[
+            "status", "worker", "lease_expires_at", "finished_at", "progress",
+            "attempt", "error_code", "error_message", "points_cost", "checkpoints",
+        ])
+        lease.log_transition(task, TaskStatus.FAILED, TaskStatus.PENDING,
+                             actor=f"user:{request.user.id}", reason="retry_existing_upload")
+    return Response({"ok": True, "task_id": str(task.id), "status": task.status})

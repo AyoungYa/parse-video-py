@@ -4,11 +4,28 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import Task, WorkerNode
+from .models import Task, TaskStatus, WorkerNode
+
+
+def _public_status(task: Task) -> str:
+    if task.status in (TaskStatus.WORKER_OFFLINE, TaskStatus.PENDING, TaskStatus.LEASED):
+        checkpoints = task.checkpoints or {}
+        previous = checkpoints.get("_retry_display_status") or checkpoints.get("_offline_display_status")
+        if previous:
+            return previous
+    return task.status
 
 
 class TaskListSerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField()
     duration_seconds = serializers.FloatField(read_only=True)
+    bbox_confirmed = serializers.SerializerMethodField()
+
+    def get_bbox_confirmed(self, obj: Task) -> bool:
+        return bool((obj.params or {}).get("bbox_confirmed"))
+
+    def get_status(self, obj: Task) -> str:
+        return _public_status(obj)
 
     class Meta:
         model = Task
@@ -17,6 +34,7 @@ class TaskListSerializer(serializers.ModelSerializer):
             "task_no",
             "status",
             "progress",
+            "bbox_confirmed",
             "duration_seconds",
             "width",
             "height",
@@ -26,8 +44,28 @@ class TaskListSerializer(serializers.ModelSerializer):
 
 
 class TaskDetailSerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField()
+    can_retry = serializers.SerializerMethodField()
+    error_code = serializers.SerializerMethodField()
+    error_message = serializers.SerializerMethodField()
     duration_seconds = serializers.FloatField(read_only=True)
     all_green = serializers.SerializerMethodField()
+
+    def get_status(self, obj: Task) -> str:
+        return _public_status(obj)
+
+    def get_can_retry(self, obj: Task) -> bool:
+        return obj.status == TaskStatus.FAILED and bool(obj.original_key)
+
+    def get_error_code(self, obj: Task) -> str:
+        return ""
+
+    def get_error_message(self, obj: Task) -> str:
+        if obj.status == TaskStatus.FAILED:
+            return "系统原因处理失败。"
+        if obj.status not in (TaskStatus.CANCELLED, TaskStatus.EXPIRED):
+            return ""
+        return obj.error_message
 
     class Meta:
         model = Task
@@ -35,6 +73,7 @@ class TaskDetailSerializer(serializers.ModelSerializer):
             "id",
             "task_no",
             "status",
+            "can_retry",
             "progress",
             "duration_seconds",
             "size_bytes",

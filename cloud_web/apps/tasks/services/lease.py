@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -20,6 +21,7 @@ from django.utils import timezone
 from apps.billing.services import refund_points
 
 from ..models import IN_FLIGHT, Task, TaskEvent, TaskStatus, WorkerNode
+from . import oss
 
 logger = logging.getLogger(__name__)
 
@@ -74,21 +76,28 @@ def claim_next_task(worker: WorkerNode) -> Task | None:
     with transaction.atomic():
         task = (
             Task.objects.select_for_update(skip_locked=True)
-            .filter(status=TaskStatus.PENDING)
+            .filter(status__in=(TaskStatus.PENDING, TaskStatus.WORKER_OFFLINE))
             .order_by("created_at")
             .first()
         )
         if task is None:
             return None
 
+        from_status = task.status
         task.status = TaskStatus.LEASED
         task.worker = worker
         task.lease_expires_at = now + timedelta(seconds=settings.LEASE_SECONDS)
         task.attempt += 1
-        task.progress = 0
+        if from_status == TaskStatus.PENDING and not (task.checkpoints or {}).get("_retry_display_status"):
+            task.progress = 0
         task.started_at = task.started_at or now
         task.error_code = ""
         task.error_message = ""
+        checkpoints = dict(task.checkpoints or {})
+        run_id = uuid.uuid4().hex
+        checkpoints["_active_run_id"] = run_id
+        checkpoints["_run_ids"] = [*(checkpoints.get("_run_ids") or []), run_id]
+        task.checkpoints = checkpoints
         task.save(
             update_fields=[
                 "status",
@@ -99,9 +108,10 @@ def claim_next_task(worker: WorkerNode) -> Task | None:
                 "started_at",
                 "error_code",
                 "error_message",
+                "checkpoints",
             ]
         )
-        _log(task, TaskStatus.PENDING, TaskStatus.LEASED, actor=worker.name, attempt=task.attempt)
+        _log(task, from_status, TaskStatus.LEASED, actor=worker.name, attempt=task.attempt)
     return task
 
 
@@ -139,10 +149,128 @@ def heartbeat(
         elif task.status == TaskStatus.LEASED:
             task.status = TaskStatus.REMOVING_WATERMARK if confirmed else TaskStatus.EXTRACTING_FRAMES
 
-        task.save(update_fields=["lease_expires_at", "progress", "status"])
+        checkpoints = dict(task.checkpoints or {})
+        checkpoints.pop("_offline_display_status", None)
+        checkpoints.pop("_retry_display_status", None)
+        task.checkpoints = checkpoints
+        task.save(update_fields=["lease_expires_at", "progress", "status", "checkpoints"])
         if task.status != from_status:
             _log(task, from_status, task.status, actor=worker.name, stage=stage, message=message)
     return settings.LEASE_SECONDS
+
+
+def release_for_restart(worker: WorkerNode, task_id: str) -> Task:
+    """计划重启时主动归还本节点的任务；重启不消耗处理失败次数。"""
+    with transaction.atomic():
+        task = Task.objects.select_for_update().filter(id=task_id).first()
+        if task is None or task.worker_id != worker.id or task.status not in IN_FLIGHT:
+            raise LeaseLost("任务已不在该节点手中")
+        from_status = task.status
+        checkpoints = dict(task.checkpoints or {})
+        checkpoints["_retry_display_status"] = (
+            checkpoints.get("_retry_display_status")
+            or checkpoints.get("_offline_display_status")
+            or from_status
+        )
+        task.status = TaskStatus.PENDING
+        task.worker = None
+        task.lease_expires_at = None
+        task.checkpoints = checkpoints
+        task.attempt = max(0, task.attempt - 1)
+        task.error_code = "WORKER_RESTARTED"
+        task.error_message = "处理节点重启，任务已重新排队"
+        task.save(update_fields=[
+            "status", "worker", "lease_expires_at", "attempt",
+            "error_code", "error_message", "checkpoints",
+        ])
+        _log(task, from_status, TaskStatus.PENDING, actor=worker.name, reason="worker_restart")
+        return task
+
+
+def record_checkpoint(
+    worker: WorkerNode, task_id: str, stage: str, metrics: dict | None = None,
+) -> Task:
+    """OSS 产物存在且租约有效后，原子登记可供其他 worker 恢复的阶段。"""
+    if stage not in oss.CHECKPOINT_FILES:
+        raise InvalidTransition("未知处理阶段")
+    with transaction.atomic():
+        task = Task.objects.select_for_update().filter(id=task_id).first()
+        if task is None or task.worker_id != worker.id or task.status not in IN_FLIGHT:
+            raise LeaseLost("任务已不在该节点手中")
+        if task.lease_expires_at and task.lease_expires_at < timezone.now():
+            raise LeaseLost("租约已过期")
+        if not (task.params or {}).get("bbox_confirmed"):
+            raise InvalidTransition("水印位置尚未确认")
+        checkpoints = dict(task.checkpoints or {})
+        key = oss.checkpoint_key(task_id, stage, checkpoints.get("_active_run_id", ""))
+        if not oss.object_exists(key):
+            raise InvalidTransition("阶段产物尚未上传到 OSS")
+        dependencies = {
+            "lama_apply": ("build_mask",),
+            "verify": ("lama_apply",),
+            "texture_fix": ("verify",),
+            "texture_fix_rowinterp": ("verify",),
+            "verify_final": ("texture_fix", "texture_fix_rowinterp"),
+        }
+        needed = dependencies.get(stage, ())
+        if stage == "lama_apply" and task.mask_key:
+            needed = ()
+        if stage == "verify_final":
+            if not any(name in checkpoints for name in needed):
+                raise InvalidTransition("缺少修复阶段检查点")
+        elif any(name not in checkpoints for name in needed):
+            raise InvalidTransition("前一阶段尚未登记")
+        previous = checkpoints.get(stage)
+        if isinstance(previous, dict) and previous.get("key") == key:
+            return task
+        downstream = {
+            "build_mask": ("lama_apply", "verify", "texture_fix", "texture_fix_rowinterp", "verify_final"),
+            "lama_apply": ("verify", "texture_fix", "texture_fix_rowinterp", "verify_final"),
+            "verify": ("texture_fix", "texture_fix_rowinterp", "verify_final"),
+            "texture_fix": ("verify_final",),
+            "texture_fix_rowinterp": ("verify_final",),
+        }
+        for later in downstream.get(stage, ()):
+            checkpoints.pop(later, None)
+        entry: dict = {"key": key}
+        if stage in ("verify", "verify_final"):
+            if not isinstance(metrics, dict):
+                raise InvalidTransition("验收阶段缺少指标")
+            entry["metrics"] = metrics
+        checkpoints[stage] = entry
+        task.checkpoints = checkpoints
+        task.attempt = 0  # 只累计当前阶段连续失败；已完成阶段给后续阶段重新计数
+        task.save(update_fields=["checkpoints", "attempt"])
+        _log(task, task.status, task.status, actor=worker.name, checkpoint=stage)
+        return task
+
+
+def record_keyframe(worker: WorkerNode, task_id: str, index: int) -> Task:
+    """逐帧登记已上传的图片，接力 worker 只复用云端确认过的版本。"""
+    if index not in range(3):
+        raise InvalidTransition("关键帧序号无效")
+    with transaction.atomic():
+        task = Task.objects.select_for_update().filter(id=task_id).first()
+        if task is None or task.worker_id != worker.id or task.status not in (
+            TaskStatus.LEASED, TaskStatus.EXTRACTING_FRAMES, TaskStatus.LOCATING_WATERMARK
+        ):
+            raise LeaseLost("任务已不在该节点的准备阶段")
+        if task.lease_expires_at and task.lease_expires_at < timezone.now():
+            raise LeaseLost("租约已过期")
+        checkpoints = dict(task.checkpoints or {})
+        key = oss.keyframe_key(task_id, index, checkpoints.get("_active_run_id", ""))
+        if not oss.object_exists(key):
+            raise InvalidTransition("关键帧尚未上传到 OSS")
+        frames = dict(checkpoints.get("keyframes") or {})
+        if frames.get(str(index)) == key:
+            return task
+        frames[str(index)] = key
+        checkpoints["keyframes"] = frames
+        task.checkpoints = checkpoints
+        task.attempt = 0
+        task.save(update_fields=["checkpoints", "attempt"])
+        _log(task, task.status, task.status, actor=worker.name, keyframe=index)
+        return task
 
 
 def prepare_task(worker: WorkerNode, task_id: str, bbox: list, candidates: list) -> Task:
@@ -271,14 +399,20 @@ def fail_task(
         can_retry = retryable and task.attempt < settings.MAX_ATTEMPT
 
         if can_retry:
+            checkpoints = dict(task.checkpoints or {})
+            checkpoints["_retry_display_status"] = (
+                checkpoints.get("_retry_display_status")
+                or checkpoints.get("_offline_display_status")
+                or from_status
+            )
             task.status = TaskStatus.PENDING
             task.worker = None
             task.lease_expires_at = None
-            task.progress = 0
+            task.checkpoints = checkpoints
             task.error_code = error_code
             task.error_message = error_message[:2000]
             task.save(
-                update_fields=["status", "worker", "lease_expires_at", "progress", "error_code", "error_message"]
+                update_fields=["status", "worker", "lease_expires_at", "checkpoints", "error_code", "error_message"]
             )
             _log(task, from_status, TaskStatus.PENDING, actor=worker.name, code=error_code, retry=True)
             return task
@@ -300,6 +434,39 @@ def fail_task(
 # --------------------------------------------------------------------------
 # 回收（定时任务调用）
 # --------------------------------------------------------------------------
+def mark_offline_workers(batch: int = 100) -> dict:
+    """超过 60 秒没有进程级 alive 的节点离线，释放其任务供接力。"""
+    cutoff = timezone.now() - timedelta(seconds=60)
+    worker_ids = list(
+        WorkerNode.objects.filter(status=WorkerNode.Status.ONLINE, last_heartbeat_at__lt=cutoff)
+        .values_list("id", flat=True)[:batch]
+    )
+    stats = {"offline": 0, "released": 0}
+    for worker_id in worker_ids:
+        with transaction.atomic():
+            worker = WorkerNode.objects.select_for_update().filter(pk=worker_id).first()
+            if not worker or worker.status != WorkerNode.Status.ONLINE or not worker.last_heartbeat_at or worker.last_heartbeat_at >= cutoff:
+                continue
+            worker.status = WorkerNode.Status.OFFLINE
+            worker.save(update_fields=["status"])
+            stats["offline"] += 1
+            for task in Task.objects.select_for_update().filter(worker=worker, status__in=IN_FLIGHT):
+                previous = task.status
+                checkpoints = dict(task.checkpoints or {})
+                checkpoints["_offline_display_status"] = previous
+                task.status = TaskStatus.WORKER_OFFLINE
+                task.worker = None
+                task.lease_expires_at = None
+                task.attempt = max(0, task.attempt - 1)
+                task.error_code = "WORKER_OFFLINE"
+                task.error_message = "处理节点超过 60 秒未上报存活，等待其他节点接力"
+                task.checkpoints = checkpoints
+                task.save(update_fields=["status", "worker", "lease_expires_at", "attempt", "error_code", "error_message", "checkpoints"])
+                _log(task, previous, TaskStatus.WORKER_OFFLINE, actor="reaper", worker=worker.name)
+                stats["released"] += 1
+    return stats
+
+
 def reclaim_expired_leases(batch: int = 100) -> dict:
     """把租约超时的在途任务收回。
 
@@ -334,10 +501,16 @@ def reclaim_expired_leases(batch: int = 100) -> dict:
                 stats["failed"] += 1
                 need_refund = True
             else:
+                checkpoints = dict(task.checkpoints or {})
+                checkpoints["_retry_display_status"] = (
+                    checkpoints.get("_retry_display_status")
+                    or checkpoints.get("_offline_display_status")
+                    or from_status
+                )
                 task.status = TaskStatus.PENDING
                 task.worker = None
                 task.lease_expires_at = None
-                task.progress = 0
+                task.checkpoints = checkpoints
                 task.error_code = "LEASE_EXPIRED"
                 task.error_message = "处理节点失联，已重新排队"
                 task.save(
@@ -345,7 +518,7 @@ def reclaim_expired_leases(batch: int = 100) -> dict:
                         "status",
                         "worker",
                         "lease_expires_at",
-                        "progress",
+                        "checkpoints",
                         "error_code",
                         "error_message",
                     ]
