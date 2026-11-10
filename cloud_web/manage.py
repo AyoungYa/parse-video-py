@@ -12,7 +12,7 @@ def main() -> None:
         from django.core.management import execute_from_command_line
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "无法导入 Django，请确认已执行 uv sync（依赖见 pyproject.toml）"
+            "无法导入 Django，请在仓库根目录执行 uv sync --extra services"
         ) from exc
 
     try:

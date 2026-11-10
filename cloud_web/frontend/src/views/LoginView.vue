@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { api } from "@/api/client";
 import { useUserStore } from "@/stores/user";
+import { useSiteStore } from "@/stores/site";
+import BrandLogo from "@/components/BrandLogo.vue";
 
 const router = useRouter();
 const user = useUserStore();
+const site = useSiteStore();
 
 const phone = ref("");
 const code = ref("");
@@ -17,13 +20,22 @@ const countdown = ref(0);
 /** 本地开发（console 短信通道）时后端回显的验证码，方便联调 */
 const devCode = ref("");
 
+/** 图形验证码：服务端签发的挑战，答案不回传（本地开发回显在 devCaptcha） */
+const captchaId = ref("");
+const captchaCode = ref("");
+const captchaImg = ref("");
+const captchaLoading = ref(false);
+const devCaptcha = ref("");
+
 let timer: number | undefined;
 
 const RESEND_SECONDS = 60;
 const SENT_AT_KEY = "sms_sent_at";
 
 const phoneValid = computed(() => /^1[3-9]\d{9}$/.test(phone.value));
-const canSend = computed(() => phoneValid.value && countdown.value === 0 && !sending.value);
+const canSend = computed(
+  () => phoneValid.value && captchaCode.value.length === 4 && countdown.value === 0 && !sending.value
+);
 const canSubmit = computed(() => phoneValid.value && /^\d{6}$/.test(code.value) && !loading.value);
 
 const SELLING = [
@@ -60,6 +72,24 @@ if (lastSent) {
 
 onBeforeUnmount(() => window.clearInterval(timer));
 
+/** 取一张新的图形验证码。每次发送（无论成败）后都要换新图：旧挑战已核销/作废。 */
+async function refreshCaptcha() {
+  captchaLoading.value = true;
+  try {
+    const { data } = await api.captcha();
+    captchaId.value = data.captcha_id;
+    captchaImg.value = data.image;
+    devCaptcha.value = data.dev_code || "";
+    captchaCode.value = "";
+  } catch {
+    captchaImg.value = "";
+  } finally {
+    captchaLoading.value = false;
+  }
+}
+
+onMounted(refreshCaptcha);
+
 async function sendCode() {
   if (!canSend.value) return;
   errorMsg.value = "";
@@ -69,7 +99,7 @@ async function sendCode() {
   }
   sending.value = true;
   try {
-    const { data } = await api.smsSend(phone.value);
+    const { data } = await api.smsSend(phone.value, captchaId.value, captchaCode.value);
     startCountdown(data.retry_after || RESEND_SECONDS);
     devCode.value = data.dev_code || "";
     ElMessage.success("验证码已发送");
@@ -78,6 +108,8 @@ async function sendCode() {
     if (retry) startCountdown(retry);
     errorMsg.value = e?.response?.data?.message || "发送失败，请稍后重试";
   } finally {
+    // 无论如何都换新图：图形码是一次性的（成功已核销，失败也可能已作废）
+    await refreshCaptcha();
     sending.value = false;
   }
 }
@@ -99,7 +131,7 @@ async function submit() {
     const { data } = await api.smsLogin(phone.value, code.value);
     user.setToken(data.token);
     await user.refresh();
-    if (data.is_new) ElMessage.success("账号已创建，送 3 条 30 秒试用");
+    if (data.is_new) ElMessage.success("账号已创建，试用额度已到账");
     router.push({ name: "upload" });
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.message || "登录失败，请重试";
@@ -113,11 +145,7 @@ async function submit() {
   <div class="auth">
     <aside class="brand-side">
       <div class="brand-row">
-        <svg class="mark" viewBox="0 0 22 22" aria-hidden="true">
-          <rect x="1.4" y="1.4" width="19.2" height="19.2" rx="5.6" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <path d="M6.4 13.6L13.2 6.8a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3l-3.6 3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-          <path d="M6.4 13.6h6.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        </svg>
+        <BrandLogo :size="30" inverse />
         <span class="brand-name">无痕匠</span>
       </div>
 
@@ -132,23 +160,20 @@ async function submit() {
       </div>
 
       <p class="legal">
-        仅限处理您拥有版权或已获授权的素材。本站不提供任何平台视频解析或下载功能，素材在任务结束 24 小时后自动删除。
+        仅限处理您拥有版权或已获授权的素材。本站不提供任何平台视频解析或下载功能，素材在任务结束
+        {{ site.retentionText }}后自动删除。
       </p>
     </aside>
 
     <main class="form-side">
       <div class="form-wrap">
         <div class="mobile-brand">
-          <svg class="mark" viewBox="0 0 22 22" aria-hidden="true">
-            <rect x="1.4" y="1.4" width="19.2" height="19.2" rx="5.6" fill="none" stroke="currentColor" stroke-width="1.5" />
-            <path d="M6.4 13.6L13.2 6.8a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3l-3.6 3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-            <path d="M6.4 13.6h6.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          </svg>
+          <BrandLogo :size="28" inverse />
           无痕匠
         </div>
 
         <h2 class="h1">手机号登录</h2>
-        <p class="micro muted sub">未注册的手机号将自动创建账号，新用户送 3 条 30 秒试用。</p>
+        <p class="micro muted sub">未注册的手机号将自动创建账号，新用户注册即赠试用额度。</p>
 
         <form class="form" @submit.prevent="submit">
           <label class="field">
@@ -165,6 +190,30 @@ async function submit() {
                 autocomplete="tel"
                 autofocus
               />
+            </div>
+          </label>
+
+          <label class="field">
+            <span class="field-label">图形验证码</span>
+            <div class="code-row">
+              <input
+                v-model="captchaCode"
+                class="input num"
+                type="text"
+                maxlength="4"
+                placeholder="4 位字符"
+                autocomplete="off"
+              />
+              <button
+                class="captcha-btn"
+                type="button"
+                :disabled="captchaLoading"
+                title="看不清？点击换一张"
+                @click="refreshCaptcha"
+              >
+                <img v-if="captchaImg" :src="captchaImg" alt="图形验证码，点击刷新" />
+                <span v-else class="micro muted">加载中…</span>
+              </button>
             </div>
           </label>
 
@@ -191,6 +240,11 @@ async function submit() {
             </div>
           </label>
 
+          <p v-if="devCaptcha" class="dev-hint micro">
+            本地开发图形码：<b class="num">{{ devCaptcha }}</b>
+            <button class="link-btn" type="button" @click="captchaCode = devCaptcha">填入</button>
+          </p>
+
           <p v-if="devCode" class="dev-hint micro">
             本地开发验证码：<b class="num">{{ devCode }}</b>
             <button class="link-btn" type="button" @click="code = devCode">填入</button>
@@ -204,7 +258,8 @@ async function submit() {
         </form>
 
         <p class="hint micro muted">
-          登录即表示同意《用户协议》与《隐私政策》。我们只处理您上传的素材，任务结束 24 小时后自动删除。
+          登录即表示同意《用户协议》与《隐私政策》。我们只处理您上传的素材，任务结束
+          {{ site.retentionText }}后自动删除。
         </p>
 
         <p class="legal-mobile legal">
@@ -250,21 +305,15 @@ async function submit() {
   gap: 9px;
 }
 
-.mark {
-  width: 24px;
-  height: 24px;
-  color: #7fd0b4;
-}
-
 .brand-name {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 500;
   letter-spacing: 0.06em;
   color: #f2f7f4;
 }
 
 .slogan {
-  font-size: 32px;
+  font-size: var(--fs-hero);
   line-height: 1.28;
   font-weight: 500;
   letter-spacing: -0.01em;
@@ -290,19 +339,19 @@ async function submit() {
 }
 
 .selling .k {
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 500;
   color: #d9ebe4;
 }
 
 .selling .v {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: rgba(217, 235, 228, 0.62);
   line-height: 1.55;
 }
 
 .legal {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.7;
   color: rgba(217, 235, 228, 0.42);
 }
@@ -325,7 +374,7 @@ async function submit() {
   display: none;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 500;
   color: var(--ink-900);
   letter-spacing: 0.04em;
@@ -364,7 +413,7 @@ async function submit() {
 
 .input-group .prefix {
   padding: 0 10px 0 12px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--ink-400);
   border-right: 1px solid var(--line-soft);
   line-height: 1.2;
@@ -394,9 +443,35 @@ async function submit() {
 }
 
 .send-btn {
-  height: 44px;
-  min-width: 116px;
-  font-size: 13px;
+  height: var(--ctl-h-input);
+  min-width: 150px;
+  font-size: var(--fs-small);
+}
+
+/* 图形验证码图片：占输入框同高，点击整块换新图 */
+.captcha-btn {
+  height: var(--ctl-h-input);
+  width: 176px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.captcha-btn img {
+  width: 168px;
+  height: 56px;
+  display: block;
+}
+
+.captcha-btn:active {
+  border-color: var(--brand);
 }
 
 .dev-hint {
@@ -417,7 +492,7 @@ async function submit() {
 }
 
 .err {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--bad);
   margin-top: -4px;
 }

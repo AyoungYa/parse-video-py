@@ -13,6 +13,7 @@ urlpatterns = [
     # Worker 协议（算力机调用）
     path("worker/claim", views_worker.claim, name="worker-claim"),
     path("worker/heartbeat", views_worker.heartbeat, name="worker-heartbeat"),
+    path("worker/prepared", views_worker.prepared, name="worker-prepared"),
     path("worker/complete", views_worker.complete, name="worker-complete"),
     path("worker/fail", views_worker.fail, name="worker-fail"),
 ]

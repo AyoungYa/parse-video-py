@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><mask id="wj-mark-inv"><rect x="4" y="4" width="56" height="56" rx="13" fill="#fff"/><path d="M21.5 23 L37.5 32 L21.5 41 Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/><path d="M60 4 L46 4 A14 14 0 0 0 60 18 Z" fill="#000"/><path d="M49 18.5 L50.7 24.3 L56.5 26 L50.7 27.7 L49 33.5 L47.3 27.7 L41.5 26 L47.3 24.3 Z" fill="#000"/></mask></defs>
+  <rect x="4" y="4" width="56" height="56" rx="13" fill="#faf9f5" mask="url(#wj-mark-inv)"/>
+</svg>

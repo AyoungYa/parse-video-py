@@ -5,9 +5,11 @@ import UploadPanel from "@/components/UploadPanel.vue";
 import TaskChip from "@/components/TaskChip.vue";
 import { api, type TaskListItem } from "@/api/client";
 import { useUserStore } from "@/stores/user";
+import { useSiteStore } from "@/stores/site";
 
 const router = useRouter();
 const user = useUserStore();
+const site = useSiteStore();
 const recent = ref<TaskListItem[]>([]);
 
 const TIPS = [
@@ -63,7 +65,8 @@ onMounted(async () => {
     </section>
 
     <p class="micro muted legal">
-      本站仅处理你拥有版权或已获授权的素材，不提供任何平台视频解析或下载功能。素材在任务结束 24 小时后自动删除。
+      本站仅处理你拥有版权或已获授权的素材，不提供任何平台视频解析或下载功能。素材在任务结束
+      {{ site.retentionText }}后自动删除。
     </p>
   </div>
 </template>
@@ -76,7 +79,7 @@ onMounted(async () => {
 .hero-sub {
   margin-top: 12px;
   max-width: 520px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.7;
 }
 
@@ -110,7 +113,7 @@ onMounted(async () => {
 }
 
 .idx {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--ink-300);
   flex-shrink: 0;
   letter-spacing: 0.04em;

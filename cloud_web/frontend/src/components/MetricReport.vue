@@ -133,20 +133,20 @@ const riskCount = computed(() => rows.value.filter((r) => r.ok === false).length
 }
 
 .label {
-  font-size: 13px;
+  font-size: var(--fs-small);
   color: var(--ink-900);
   width: 84px;
   flex-shrink: 0;
 }
 
 .value {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   flex: 1;
   min-width: 0;
 }
 
 .verdict {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   flex-shrink: 0;
 }
 
@@ -167,7 +167,7 @@ const riskCount = computed(() => rows.value.filter((r) => r.ok === false).length
   padding: 10px 12px;
   background: var(--surface-sunken);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1.6;
   color: var(--ink-600);
 }

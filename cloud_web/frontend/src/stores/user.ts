@@ -11,11 +11,11 @@ export const useUserStore = defineStore("user", {
   }),
   getters: {
     isLoggedIn: (state) => Boolean(state.token),
-    /** 积分翻译成用户能理解的东西：约还能处理几条 30 秒视频 */
+    /** 积分的通俗说法。刻意不写死「1 分 = 1 条 30 秒」这类换算，方便后续调价 */
     pointsHint: (state) => {
       if (state.points === null) return "";
       if (state.quota?.is_member) return "订阅期内不限条数";
-      return `约可处理 ${state.points} 条 30 秒视频`;
+      return `约可处理 ${state.points} 条短视频`;
     },
   },
   actions: {

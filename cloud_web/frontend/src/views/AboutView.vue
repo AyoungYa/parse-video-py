@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useSiteStore } from "@/stores/site";
+
+const site = useSiteStore();
 /**
  * 关于与备案信息页。
  *
@@ -28,7 +31,7 @@ const POLICY_URL = "https://beian.miit.gov.cn/";
       <h2 class="h2">素材处理承诺</h2>
       <ul class="list">
         <li>只处理<strong>你主动上传</strong>的素材，不解析、不下载任何第三方平台链接。</li>
-        <li>原片与成片在 <strong>处理完成后即删除</strong>，默认保留不超过 24 小时。</li>
+        <li>原片与成片在 <strong>处理完成后即删除</strong>，默认保留不超过 {{ site.retentionText }}。</li>
         <li>算力节点只持有<strong>单文件临时访问凭证</strong>，不持有账号密钥。</li>
         <li>验收不达标<strong>不计费</strong>，失败自动退还积分。</li>
       </ul>
@@ -70,7 +73,7 @@ const POLICY_URL = "https://beian.miit.gov.cn/";
 }
 
 .title {
-  font-size: 24px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--ink-900);
   margin-bottom: var(--sp-6);
@@ -82,27 +85,27 @@ const POLICY_URL = "https://beian.miit.gov.cn/";
 }
 
 .h2 {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--ink-700);
   margin-bottom: var(--sp-3);
 }
 
 .p {
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.75;
   color: var(--ink-600);
 }
 
 .muted {
   color: var(--ink-400);
-  font-size: 13px;
+  font-size: var(--fs-small);
 }
 
 .list {
   margin: 0;
   padding-left: 20px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.9;
   color: var(--ink-600);
 }

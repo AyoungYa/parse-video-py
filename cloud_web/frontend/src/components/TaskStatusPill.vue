@@ -8,6 +8,10 @@ const MAP: Record<string, { text: string; tone: string; live?: boolean }> = {
   awaiting_upload: { text: "等待上传", tone: "muted" },
   pending: { text: "排队中", tone: "muted" },
   leased: { text: "已分配算力", tone: "brand", live: true },
+  extracting_frames: { text: "获取关键帧", tone: "brand", live: true },
+  locating_watermark: { text: "定位水印", tone: "brand", live: true },
+  awaiting_confirmation: { text: "待确认位置", tone: "warn" },
+  removing_watermark: { text: "去水印中", tone: "brand", live: true },
   running: { text: "处理中", tone: "brand", live: true },
   verifying: { text: "验收中", tone: "brand", live: true },
   needs_manual: { text: "待你框选", tone: "warn" },
@@ -41,10 +45,10 @@ const label = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 22px;
-  padding: 0 8px;
+  height: 34px;
+  padding: 0 10px;
   border-radius: var(--r-tag);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1;
   white-space: nowrap;
 }

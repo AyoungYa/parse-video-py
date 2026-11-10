@@ -62,7 +62,8 @@ const balanceHint = computed(() => {
   const b = data.value?.balance ?? 0;
   if (data.value?.subscription) return "订阅期内处理不扣积分";
   if (b === 0) return "积分用完了，签到或订阅后继续";
-  return `约可处理 ${b} 条 30 秒视频，或 ${Math.floor(b / 3)} 条 5 分钟内视频`;
+  // 刻意不给「1 分 = 1 条 30 秒 / 5 分钟 = 3 分」这类明确换算，方便后续调价
+  return `当前积分约可处理 ${b} 条短视频，更长的视频会按时长多扣积分`;
 });
 
 const subHint = computed(() => {
@@ -228,7 +229,7 @@ onMounted(load);
 }
 
 .balance {
-  font-size: 44px;
+  font-size: var(--fs-huge);
   line-height: 1.1;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -243,11 +244,11 @@ onMounted(load);
 
 .day {
   flex: 1;
-  height: 26px;
+  height: 40px;
   border-radius: 6px;
   background: var(--surface-sunken);
   color: var(--ink-300);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -297,12 +298,12 @@ onMounted(load);
 }
 
 .reason {
-  font-size: 13px;
+  font-size: var(--fs-small);
   color: var(--ink-900);
 }
 
 .delta {
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--ink-600);
   flex-shrink: 0;
 }

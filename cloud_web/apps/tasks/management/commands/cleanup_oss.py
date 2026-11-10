@@ -1,4 +1,4 @@
-"""按合规承诺清理 OSS：处理完即删，默认保留 24 小时。
+"""按合规承诺清理 OSS：已结束任务的对象保留 OSS_RETENTION_DAYS 天（默认 3 天）后删除。
 
 建议每小时跑一次。只删已结束的任务对象，在途任务绝不碰。
 """
@@ -22,7 +22,7 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **options):
-        cutoff = timezone.now() - timedelta(hours=settings.OSS_RETENTION_HOURS)
+        cutoff = timezone.now() - timedelta(days=settings.OSS_RETENTION_DAYS)
         qs = Task.objects.filter(status__in=TERMINAL, finished_at__lt=cutoff).exclude(
             original_key="", result_key=""
         )

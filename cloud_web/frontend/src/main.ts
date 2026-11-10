@@ -13,8 +13,11 @@ import "./styles/base.css";
 
 import App from "./App.vue";
 import router from "./router";
+import { useSiteStore } from "./stores/site";
 
 const app = createApp(App);
 app.use(createPinia());
 app.use(router);
+// 公开配置（保留天数等文案参数）尽早拉一次，失败则用默认值
+useSiteStore().refresh();
 app.mount("#app");

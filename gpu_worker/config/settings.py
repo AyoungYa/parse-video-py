@@ -9,7 +9,10 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env", override=False)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "worker-local-only")
 DEBUG = os.getenv("DEBUG", "0") == "1"
@@ -18,8 +21,11 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
-    "core",
+    "core.apps.CoreConfig",
 ]
+
+# contenttypes 使用本服务专属表名；迁移文件同样指向该表。
+MIGRATION_MODULES = {"contenttypes": "core.contenttypes_migrations"}
 
 MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
@@ -37,11 +43,33 @@ TEMPLATES = [
     }
 ]
 
-# 本地 SQLite：只存任务镜像与心跳日志，丢了不影响云端状态
+def required_mysql(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"算力机 MySQL 配置缺失：{name}")
+    return value
+
+
+# 算力机运行日志存于独立 MySQL 库；云端任务状态仍由 cloud_web 管理。
+_mysql_options = {
+    "charset": "utf8mb4",
+    "connect_timeout": int(os.getenv("WORKER_MYSQL_CONNECT_TIMEOUT", "10")),
+}
+if os.getenv("WORKER_MYSQL_SSL", "0") == "1":
+    _mysql_options["ssl"] = (
+        {"ca": os.environ["WORKER_MYSQL_SSL_CA"]}
+        if os.getenv("WORKER_MYSQL_SSL_CA") else {}
+    )
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": Path(os.getenv("WORKER_DB_PATH", BASE_DIR / "worker.sqlite3")),
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": required_mysql("WORKER_MYSQL_NAME"),
+        "USER": required_mysql("WORKER_MYSQL_USER"),
+        "PASSWORD": required_mysql("WORKER_MYSQL_PASSWORD"),
+        "HOST": required_mysql("WORKER_MYSQL_HOST"),
+        "PORT": int(os.getenv("WORKER_MYSQL_PORT", "3306")),
+        "OPTIONS": _mysql_options,
+        "CONN_MAX_AGE": 0,
     }
 }
 

@@ -41,6 +41,7 @@ def _build_payload(task, lease_seconds: int) -> dict:
     """下发给 worker 的任务包。视频走签名 URL，不下发 OSS 凭证。"""
     rkey = oss.result_key(str(task.id))
     pkey = oss.report_key(str(task.id))
+    fkeys = [oss.keyframe_key(str(task.id), i) for i in range(3)]
     payload = {
         "task_id": str(task.id),
         "lease_seconds": lease_seconds,
@@ -54,6 +55,8 @@ def _build_payload(task, lease_seconds: int) -> dict:
         },
         "result_key": rkey,
         "report_key": pkey,
+        "phase": "render" if (task.params or {}).get("bbox_confirmed") else "prepare",
+        "keyframe_keys": fkeys,
     }
     try:
         payload["video_url"] = oss.presign_get(task.original_key)
@@ -62,10 +65,35 @@ def _build_payload(task, lease_seconds: int) -> dict:
         # 回传通道：worker 只能往这两个 key 写，写完自己报 complete
         payload["result_upload_url"] = oss.presign_put(rkey, content_type="video/mp4")
         payload["report_upload_url"] = oss.presign_put(pkey, content_type="application/json")
+        payload["keyframe_upload_urls"] = [
+            oss.presign_put(key, content_type="image/jpeg") for key in fkeys
+        ]
     except oss.OssNotConfigured:
         # 不静默降级：没有签名 URL 的 worker 什么也干不了
         raise
     return payload
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def prepared(request):
+    worker, error = _require_worker(request)
+    if error:
+        return error
+    task_id = request.data.get("task_id")
+    bbox = request.data.get("bbox")
+    if not task_id or not isinstance(bbox, list) or len(bbox) not in (0, 4):
+        return Response({"code": "bad_request", "message": "缺少 task_id 或 bbox"}, status=400)
+    if bbox and (any(type(v) is not int for v in bbox) or bbox[0] < 0 or bbox[1] < 0
+                 or bbox[2] < 8 or bbox[3] < 8):
+        return Response({"code": "bad_bbox", "message": "建议区域无效"}, status=400)
+    if not all(oss.object_exists(oss.keyframe_key(task_id, i)) for i in range(3)):
+        return Response({"code": "keyframe_missing", "message": "关键帧尚未上传"}, status=409)
+    try:
+        task = lease.prepare_task(worker, task_id, bbox, request.data.get("candidates") or [])
+    except lease.InvalidTransition as exc:
+        return Response({"code": "invalid_transition", "message": str(exc)}, status=409)
+    return Response({"ok": True, "task_id": str(task.id), "status": task.status})
 
 
 @api_view(["POST"])

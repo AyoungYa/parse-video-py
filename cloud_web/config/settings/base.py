@@ -129,6 +129,7 @@ REST_FRAMEWORK = {
         "task_create": os.getenv("THROTTLE_TASK_CREATE", "60/hour"),
         "worker": os.getenv("THROTTLE_WORKER", "600/minute"),
         "sms_send": os.getenv("THROTTLE_SMS_SEND", "12/hour"),
+        "captcha": os.getenv("THROTTLE_CAPTCHA", "60/hour"),
     },
     "EXCEPTION_HANDLER": "apps.tasks.exceptions.api_exception_handler",
 }
@@ -161,7 +162,9 @@ LEASE_SECONDS = int(os.getenv("LEASE_SECONDS", "90"))
 HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "15"))
 MAX_ATTEMPT = int(os.getenv("MAX_ATTEMPT", "3"))
 STALE_UPLOAD_MINUTES = int(os.getenv("STALE_UPLOAD_MINUTES", "30"))
-OSS_RETENTION_HOURS = int(os.getenv("OSS_RETENTION_HOURS", "24"))
+# 素材（原片/成片/报告）保留天数：任务结束后超过该天数自动从 OSS 清理。
+# 单位为天，最小 1 天（写 0 或负数按 1 天算，避免清理窗口落到「未来」误删在途任务）。
+OSS_RETENTION_DAYS = max(1, int(os.getenv("OSS_RETENTION_DAYS", "3")))
 
 # ---- 付费规则（成本模型校准值，见 docs/product/成本与选型.md）----
 FREE_TRIAL_COUNT = int(os.getenv("FREE_TRIAL_COUNT", "3"))
@@ -185,6 +188,11 @@ SMS_ALIYUN_ACCESS_KEY_ID = os.getenv("SMS_ALIYUN_ACCESS_KEY_ID", "")
 SMS_ALIYUN_ACCESS_KEY_SECRET = os.getenv("SMS_ALIYUN_ACCESS_KEY_SECRET", "")
 SMS_ALIYUN_SIGN_NAME = os.getenv("SMS_ALIYUN_SIGN_NAME", "")
 SMS_ALIYUN_TEMPLATE_CODE = os.getenv("SMS_ALIYUN_TEMPLATE_CODE", "")
+
+# ---- 图形验证码（发短信前的人机校验，防脚本刷短信费）----
+CAPTCHA_TTL_SECONDS = int(os.getenv("CAPTCHA_TTL_SECONDS", "120"))
+CAPTCHA_MAX_ATTEMPTS = int(os.getenv("CAPTCHA_MAX_ATTEMPTS", "3"))
+CAPTCHA_DEV_ECHO = os.getenv("CAPTCHA_DEV_ECHO", "0") == "1"  # 仅开发：回显答案给自动化脚本
 
 LOGGING = {
     "version": 1,

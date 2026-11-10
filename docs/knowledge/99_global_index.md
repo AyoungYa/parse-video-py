@@ -14,6 +14,7 @@ last_scanned_at: 2026-06-08
 | 新增 API 接口 | 02_project_map.md、03_core_flows.md、04_code_rules.md | 06_build_run_deploy.md | 确认路由和响应格式 |
 | 修复 Bug | 02_project_map.md、03_core_flows.md、06_build_run_deploy.md | 05_change_safety.md | 先复现问题 |
 | 下载 403 / 防盗链问题 | 03_core_flows.md（下载代理转发流程）、02_project_map.md | 04_code_rules.md | 由服务端代理转发，勿改前端直链 |
+| cloud_web 视频去水印状态机 | 03_core_flows.md（cloud_web 任务状态机） | 05_change_safety.md | 用户确认水印区域前不得渲染 |
 | 修改鉴权 | 03_core_flows.md、05_change_safety.md | 04_code_rules.md | 注意时序安全 |
 | 修改 CLI | 02_project_map.md、03_core_flows.md、04_code_rules.md | 06_build_run_deploy.md | 注意向后兼容 |
 | 代理相关 | 06_build_run_deploy.md（含免费代理获取和测试方法） | 02_project_map.md | 仅测试用免费代理 |

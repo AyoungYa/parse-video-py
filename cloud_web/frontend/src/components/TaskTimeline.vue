@@ -8,22 +8,21 @@ const props = defineProps<{
   remainingSeconds?: number | null;
   queueAhead?: number | null;
   workerOffline?: boolean;
+  confirmed?: boolean;
 }>();
 
-const PHASES = ["排队等待", "定位水印", "修复画面", "质量验收"] as const;
+const PHASES = ["排队等待", "获取关键帧", "定位水印", "确认水印位置", "去水印", "质量验收"] as const;
 
 /** 把后端的单一 progress 映射到四个阶段：用户需要知道「现在在干什么」，不是「几成」。 */
 const activeIndex = computed(() => {
   const st = props.status;
-  if (st === "awaiting_upload" || st === "pending" || st === "leased") return 0;
-  if (st === "verifying") return 3;
-  if (st === "running") {
-    const p = props.progress;
-    if (p < 0.12) return 1;
-    if (p < 0.92) return 2;
-    return 3;
-  }
-  return 4; // 终态：全部完成
+  if (st === "awaiting_upload" || st === "pending" || st === "leased") return props.confirmed ? 4 : 0;
+  if (st === "verifying") return 5;
+  if (st === "extracting_frames") return 1;
+  if (st === "locating_watermark") return 2;
+  if (st === "awaiting_confirmation" || st === "needs_manual") return 3;
+  if (st === "removing_watermark" || st === "running") return 4;
+  return ["succeeded", "failed", "cancelled", "expired"].includes(st) ? 6 : 0;
 });
 
 function stateOf(i: number): "done" | "active" | "todo" {
@@ -41,14 +40,13 @@ const detailOf = computed<(i: number) => string>(() => (i: number) => {
     if (st === "leased") return "已分配到算力机";
     return "已进入队列";
   }
-  if (i === 1) {
-    if (activeIndex.value > 1) return "已确认水印区域";
-    if (activeIndex.value === 1) return "正在分析画面，找出恒定的水印区域";
-    return "待开始";
-  }
-  if (i === 2) {
-    if (activeIndex.value > 2) return "已完成逐帧修复";
-    if (activeIndex.value === 2) {
+  if (i === 1) return activeIndex.value === 1 ? "正在抽取画面" : activeIndex.value > 1 ? "关键帧已生成" : "待开始";
+  if (i === 2) return activeIndex.value === 2 ? "正在识别水印位置和大小" : activeIndex.value > 2 ? "已生成建议红框" : "待开始";
+  if (i === 3) return activeIndex.value === 3 ? "请确认红框或手动调整" : activeIndex.value > 3 ? "位置已确认" : "待开始";
+  if (i === 4) {
+    if (st === "pending" || st === "leased") return "位置已确认，等待算力节点继续处理";
+    if (activeIndex.value > 4) return "已完成逐帧修复";
+    if (activeIndex.value === 4) {
       const left =
         props.remainingSeconds && props.remainingSeconds > 0
           ? `　·　约剩 ${Math.ceil(props.remainingSeconds)} 秒`
@@ -57,12 +55,12 @@ const detailOf = computed<(i: number) => string>(() => (i: number) => {
     }
     return "待开始";
   }
-  if (activeIndex.value > 3) return "三项指标已生成";
-  if (activeIndex.value === 3) return "正在比对残留、纹理、闪烁";
+  if (activeIndex.value > 5) return "三项指标已生成";
+  if (activeIndex.value === 5) return "正在比对残留、纹理、闪烁";
   return "待开始";
 });
 
-const showBar = computed(() => activeIndex.value === 2 && props.status === "running");
+const showBar = computed(() => activeIndex.value === 4 && ["running", "removing_watermark"].includes(props.status));
 </script>
 
 <template>
@@ -153,7 +151,7 @@ const showBar = computed(() => activeIndex.value === 2 && props.status === "runn
 }
 
 .name {
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 500;
   color: var(--ink-900);
 }

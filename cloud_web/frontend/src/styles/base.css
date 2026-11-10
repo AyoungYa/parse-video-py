@@ -17,8 +17,8 @@ body {
   background: var(--paper);
   color: var(--ink-900);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: var(--fs-body);
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -56,31 +56,31 @@ img {
 
 /* ── 版式 ─────────────────────────────────────── */
 .display {
-  font-size: 30px;
+  font-size: var(--fs-display);
   line-height: 1.2;
   font-weight: 500;
   letter-spacing: -0.02em;
 }
 
 .h1 {
-  font-size: 22px;
+  font-size: var(--fs-xl);
   line-height: 1.35;
   font-weight: 500;
   letter-spacing: -0.01em;
 }
 
 .h2 {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1.5;
   font-weight: 500;
 }
 
 .small {
-  font-size: 13px;
+  font-size: var(--fs-small);
 }
 
 .micro {
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 
 .muted {
@@ -92,7 +92,7 @@ img {
 }
 
 .eyebrow {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--ink-400);
   letter-spacing: 0.06em;
 }
@@ -157,11 +157,11 @@ img {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 40px;
+  height: var(--ctl-h);
   padding: 0 var(--sp-4);
   border-radius: var(--r-ctl);
   border: 1px solid transparent;
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-family: inherit;
   font-weight: 500;
   line-height: 1;
@@ -208,9 +208,9 @@ img {
 }
 
 .btn-lg {
-  height: 44px;
+  height: var(--ctl-h-lg);
   padding: 0 22px;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .btn-block {
@@ -223,7 +223,7 @@ img {
   border: 0;
   padding: 0;
   color: var(--brand);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   font-family: inherit;
 }
@@ -239,10 +239,10 @@ img {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
+  height: calc(22px * var(--fs-scale));
   padding: 0 8px;
   border-radius: var(--r-tag);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1;
   white-space: nowrap;
 }
@@ -278,7 +278,7 @@ img {
   gap: 10px;
   padding: 12px 14px;
   border-radius: var(--r-ctl);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1.6;
   background: var(--surface-sunken);
   color: var(--ink-600);
@@ -307,17 +307,17 @@ img {
 }
 
 .field-label {
-  font-size: 13px;
+  font-size: var(--fs-small);
   color: var(--ink-600);
 }
 
 .input {
-  height: 44px;
+  height: var(--ctl-h-input);
   padding: 0 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-ctl);
   background: var(--surface);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-family: inherit;
   color: var(--ink-900);
   transition: border-color 0.16s, box-shadow 0.16s;
@@ -394,7 +394,7 @@ img {
   }
 
   .display {
-    font-size: 24px;
+    font-size: var(--fs-title);
   }
 
   .card {

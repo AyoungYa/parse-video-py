@@ -140,10 +140,20 @@ def _deliver(phone: str, code: str) -> None:
 
 
 def _deliver_aliyun(phone: str, code: str) -> None:
+    """真发短信。阿里云的失败码要翻译成人话，否则前端只能显示「发送失败」。
+
+    ★ 密钥/签名/模板类的配置错必须显式报错（500/502），**绝不静默降级成 console**
+      —— 否则线上「看起来正常」但用户永远收不到码，排查成本极高。
+    """
     sign = getattr(settings, "SMS_ALIYUN_SIGN_NAME", "")
     template = getattr(settings, "SMS_ALIYUN_TEMPLATE_CODE", "")
+    ak = getattr(settings, "SMS_ALIYUN_ACCESS_KEY_ID", "")
+    sk = getattr(settings, "SMS_ALIYUN_ACCESS_KEY_SECRET", "")
     if not sign or not template:
         raise SmsError("sms_provider_unconfigured", "阿里云短信未配置签名/模板", status=500)
+    if not ak or not sk:
+        raise SmsError("sms_provider_unconfigured", "阿里云短信未配置 AccessKey", status=500)
+
     try:
         from alibabacloud_dysmsapi20170525.client import Client
         from alibabacloud_dysmsapi20170525.models import SendSmsRequest
@@ -152,20 +162,62 @@ def _deliver_aliyun(phone: str, code: str) -> None:
         raise SmsError("sms_provider_unavailable", "未安装阿里云短信 SDK", status=500) from e
 
     config = Config(
-        access_key_id=settings.SMS_ALIYUN_ACCESS_KEY_ID,
-        access_key_secret=settings.SMS_ALIYUN_ACCESS_KEY_SECRET,
+        access_key_id=ak,
+        access_key_secret=sk,
         endpoint="dysmsapi.aliyuncs.com",
+        connect_timeout=3000,  # 毫秒；不设的话网络抖动会把登录页卡住
+        read_timeout=5000,
     )
     client = Client(config)
-    resp = client.send_sms(
-        SendSmsRequest(
-            phone_numbers=phone,
-            sign_name=sign,
-            template_code=template,
-            template_param=f'{{"code":"{code}"}}',
+
+    try:
+        resp = client.send_sms(
+            SendSmsRequest(
+                phone_numbers=phone,
+                sign_name=sign,
+                template_code=template,
+                template_param=f'{{"code":"{code}"}}',
+            )
         )
+    except Exception as e:  # pragma: no cover - 网络/鉴权异常
+        logger.error("[SMS:aliyun] 调用失败 %s: %s", phone, e)
+        raise SmsError("sms_send_failed", "短信服务暂时不可用，请稍后重试", status=502) from e
+
+    body = getattr(resp, "body", None)
+    result_code = getattr(body, "code", "") or ""
+    if result_code == "OK":
+        logger.info(
+            "[SMS:aliyun] 已向 %s 发送验证码（request_id=%s）",
+            phone,
+            getattr(body, "request_id", ""),
+        )
+        return
+
+    message = getattr(body, "message", "")
+    request_id = getattr(body, "request_id", "")
+    logger.error(
+        "[SMS:aliyun] 发送失败 %s: code=%s message=%s request_id=%s",
+        phone, result_code, message, request_id,
     )
-    if resp.body.code != "OK":  # pragma: no cover - 运营商侧问题
-        logger.error("[SMS:aliyun] 发送失败 %s: %s %s", phone, resp.body.code, resp.body.message)
-        raise SmsError("sms_send_failed", "短信发送失败，请稍后重试", status=502)
-    logger.info("[SMS:aliyun] 已向 %s 发送验证码", phone)
+    code_name, hint, status = _ALIYUN_ERRORS.get(
+        result_code, ("sms_send_failed", "短信发送失败，请稍后重试", 502)
+    )
+    raise SmsError(code_name, hint, status=status)
+
+
+#: 阿里云短信错误码 → （我们对外暴露的错误码, 给用户看的提示, HTTP 状态）
+#: 参考 https://help.aliyun.com/zh/sms/developer-reference/api-error-codes
+#: ★ 对外只给「能怎么办」的提示；不把 isv.xxx 原文抛给前端（会被用来探测账号状态）
+_ALIYUN_ERRORS: dict[str, tuple[str, str, int]] = {
+    "isv.BUSINESS_LIMIT_CONTROL": ("sms_rate_limited", "该号码发送过于频繁，请稍后再试", 429),
+    "isv.MOBILE_NUMBER_ILLEGAL": ("sms_phone_illegal", "该手机号无法接收短信", 400),
+    "isv.MOBILE_COUNT_OVER_LIMIT": ("sms_phone_illegal", "该手机号接收次数过多", 400),
+    "isv.AMOUNT_NOT_ENOUGH": ("sms_send_failed", "短信服务暂时不可用，请稍后重试", 502),
+    "isv.OUT_OF_SERVICE": ("sms_send_failed", "短信服务暂时不可用，请稍后重试", 502),
+    "isv.PRODUCT_UN_SUBSCRIPT": ("sms_send_failed", "短信服务暂时不可用，请稍后重试", 502),
+    "isv.SMS_SIGNATURE_ILLEGAL": ("sms_send_failed", "短信发送失败，请稍后重试", 502),
+    "isv.SMS_TEMPLATE_ILLEGAL": ("sms_send_failed", "短信发送失败，请稍后重试", 502),
+    "isv.TEMPLATE_MISSING_PARAMETERS": ("sms_send_failed", "短信发送失败，请稍后重试", 502),
+    "isv.INVALID_ACCESS_KEY_ID": ("sms_send_failed", "短信服务暂时不可用，请稍后重试", 502),
+    "SignatureDoesNotMatch": ("sms_send_failed", "短信服务暂时不可用，请稍后重试", 502),
+}

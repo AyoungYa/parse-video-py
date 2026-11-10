@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>无痕匠 · 品牌标识规范</title>
+<style>
+  :root {
+    --brand:#0e5c4a; --brand-hover:#0a4739; --brand-wash:#eaf4f0;
+    --paper:#faf9f5; --surface:#fff; --ink:#121a17; --ink-600:#4c5754;
+    --ink-400:#8a938f; --line:#e4e3dd; --deep:#0b3f33; --mint:#7fd0b4;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:48px 40px 72px; background:var(--paper); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .eyebrow { font-size:12px; letter-spacing:.14em; color:var(--brand); font-weight:600; margin:0 0 8px; }
+  h1 { font-size:26px; margin:0 0 6px; letter-spacing:-0.01em; }
+  .lede { font-size:13px; color:var(--ink-600); margin:0 0 36px; line-height:1.7; }
+  h2 { font-size:13px; font-weight:600; letter-spacing:.08em; color:var(--ink-400);
+       border-top:1px solid var(--line); padding-top:28px; margin:44px 0 16px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:24px; }
+  .row { display:flex; align-items:center; gap:32px; flex-wrap:wrap; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .cell span { font-size:11px; color:var(--ink-400); font-variant-numeric:tabular-nums; }
+  .box { display:flex; align-items:center; justify-content:center; }
+  .dark { background:var(--deep); border-color:var(--deep); }
+  .dark .cell span { color:rgba(217,235,228,.5); }
+  .caption { font-size:12px; color:var(--ink-600); margin:10px 2px 0; line-height:1.6; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .swatches { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+  .sw { width:150px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .sw .chip { height:56px; }
+  .sw .meta { padding:8px 10px; font-size:11px; line-height:1.5; }
+  .sw .meta b { display:block; font-size:12px; }
+  ul.rules { margin:12px 0 0; padding:0; list-style:none; font-size:13px; line-height:2; color:var(--ink-600); }
+  ul.rules li::before { content:"—"; color:var(--brand); margin-right:8px; }
+  code { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:12px; background:var(--brand-wash);
+         color:var(--brand); padding:1px 6px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">WUHENJIANG BRAND</p>
+  <h1>无痕匠 · 品牌标识规范</h1>
+  <p class="lede">
+    标识 = 「帧 · 擦」标：圆角方块（源自视频画幅，延续印章基因）内反白一个播放键（视频处理），
+    右上角一道弧形擦口——水印最常见的角落被干干净净擦掉，原位留一颗四角星芒（擦净焕新）。
+    三个内形全部以 mask 挖空实现，不依赖第二色，任何背景色都成立。
+  </p>
+
+  <h2>01 · 图形标（单独使用）</h2>
+  <div class="card">
+    <div class="row">
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-mark.svg" width="112" height="112"></div><span>112</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-mark.svg" width="48" height="48"></div><span>48</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-mark.svg" width="22" height="22"></div><span>22（顶栏）</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/favicon.svg" width="32" height="32"></div><span>favicon</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/favicon.png" width="32" height="32"></div><span>PNG 兜底</span></div>
+    </div>
+    <p class="caption">小于 24px 使用 <code>favicon.svg</code> 同源图形；iOS 桌面图标用 <code>apple-touch-icon.png</code>（180×180，全出血绿底）。</p>
+  </div>
+
+  <h2>02 · 组合标（图形 + 字标）</h2>
+  <div class="card">
+    <div class="row">
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo.svg" height="96"></div><span>浅底 · logo.svg</span></div>
+      <div class="cell"><div class="box" style="background:#0b3f33;border-radius:12px;padding:14px 26px"><img src="../../cloud_web/frontend/public/logo-reverse.svg" height="96"></div><span>深底 · logo-reverse.svg</span></div>
+    </div>
+    <p class="caption">字标为真矢量轮廓（非文本），放大不糊。字标与图形标间距 = 印宽的 25%；组合标最小高度 40px，再小只用图形标。</p>
+  </div>
+
+  <h2>03 · 深色背景</h2>
+  <div class="card dark">
+    <div class="row">
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-mark-inverse.svg" width="96" height="96"></div><span>96</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-mark-inverse.svg" width="24" height="24"></div><span>24</span></div>
+      <div class="cell"><div class="box"><img src="../../cloud_web/frontend/public/logo-reverse.svg" height="72"></div><span>组合标</span></div>
+    </div>
+    <p class="caption">深底（如登录页左栏 <code>#0b3f33</code>）使用反白版：块底纸白、播放键与星芒透出底色。页面内直接用 <code>&lt;BrandLogo inverse /&gt;</code>。</p>
+  </div>
+
+  <h2>04 · 色彩</h2>
+  <div class="card">
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#0e5c4a"></div><div class="meta"><b>品牌墨绿</b>#0e5c4a · var(--brand)</div></div>
+      <div class="sw"><div class="chip" style="background:#0b3f33"></div><div class="meta"><b>深底墨绿</b>#0b3f33 · 登录页左栏</div></div>
+      <div class="sw"><div class="chip" style="background:#faf9f5;border-bottom:1px solid #e4e3dd"></div><div class="meta"><b>纸白</b>#faf9f5 · var(--paper)</div></div>
+      <div class="sw"><div class="chip" style="background:#121a17"></div><div class="meta"><b>墨</b>#121a17 · var(--ink-900)</div></div>
+    </div>
+    <p class="caption">标识只用「墨绿 × 纸白」两色。应用内一律引用 token，不改 <code>tokens.css</code> 之外的色值。</p>
+  </div>
+
+  <h2>05 · 使用规则</h2>
+  <div class="card">
+    <ul class="rules">
+      <li>净空：标识四周保留 ≥ 印宽 1/4 的空白，不与文字、图片贴边。</li>
+      <li>最小尺寸：图形标 16px、组合标高 40px；更小场合只用图形标。</li>
+      <li>不改色、不加描边、不拉伸、不换字体；图形标不得旋转（擦口必须朝右上）。</li>
+      <li>禁止把印底换成照片 / 渐变；深浅底用对应版本而非透明叠加。</li>
+      <li>应用内统一走 <code>&lt;BrandLogo&gt;</code> 组件（mask 挖空，自动适配背景）。</li>
+    </ul>
+  </div>
+
+  <h2>06 · 资产与再生成</h2>
+  <div class="card">
+    <ul class="rules">
+      <li>应用内组件：<code>frontend/src/components/BrandLogo.vue</code>（顶栏 / 登录页已接入）。</li>
+      <li>静态文件：<code>frontend/public/</code>（favicon.svg / favicon.png / apple-touch-icon.png / logo-mark*.svg / logo*.svg）。</li>
+      <li>整套静态资产一键再生成：<code>docs/brand/gen_assets.py</code>（需 playwright）；字标轮廓数据见 <code>docs/brand/_lockup_data.json</code>。</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

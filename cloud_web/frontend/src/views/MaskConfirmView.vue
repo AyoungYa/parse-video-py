@@ -2,8 +2,8 @@
 /**
  * 人工确认水印位置（M3.1）。
  *
- * 触发：worker 自动定位信心不足 → 任务转 needs_manual → 结果页引导到这里。
- * 出口：提交 bbox → 任务回 pending，worker 跳过自动定位直接精修；不重复扣分。
+ * 触发：worker 定位完成 → 任务等待用户确认；低置信度也可手动框选。
+ * 出口：提交 bbox → 任务回 pending，worker 按确认区域去水印；不重复扣分。
  */
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -45,7 +45,7 @@ async function load() {
   loading.value = true;
   try {
     const { data } = await api.taskDetail(taskId);
-    if (data.status !== "needs_manual") {
+    if (data.status !== "needs_manual" && data.status !== "awaiting_confirmation") {
       // 状态已经变了（别的标签页提交过 / worker 已恢复），别停在过时页面
       await router.replace({ name: "result", params: { id: taskId } });
       return;
@@ -116,11 +116,13 @@ onMounted(load);
       <div class="head">
         <div class="grow">
           <div class="row" style="gap: 10px; flex-wrap: wrap">
-            <h1 class="h1">麻烦你框一下水印</h1>
-            <TaskStatusPill status="needs_manual" />
+            <h1 class="h1">确认水印位置</h1>
+            <TaskStatusPill :status="task.status" />
           </div>
           <p class="small secondary" style="margin-top: 8px">
-            这条视频的水印位置自动识别没把握。你框出大致范围，我们接着处理，<strong>不会重复扣积分</strong>。
+            <template v-if="candidates.length">红框是建议的水印区域。确认准确后继续，或直接拖动、重画红框。</template>
+            <template v-else>未能可靠定位水印，请在关键帧上手动框出水印区域。</template>
+            <strong>不会重复扣积分</strong>。
           </p>
         </div>
         <button class="link-btn" type="button" @click="refreshPreview">刷新预览</button>
@@ -139,6 +141,7 @@ onMounted(load);
         <BoxSelector
           v-model="bbox"
           :video-url="task.preview_url || ''"
+          :image-urls="task.keyframe_urls || []"
           :width="frameW"
           :height="frameH"
           :candidates="candidates"

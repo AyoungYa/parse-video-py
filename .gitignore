@@ -193,3 +193,6 @@ demo/
 .idea/*
 */.idea/*
 .DS_Store
+
+# 本地测试用 MySQL 3307 实例的数据目录（mysqld 需要工作区内可写路径，沙箱限制 Application Support 不可删改）
+.local/

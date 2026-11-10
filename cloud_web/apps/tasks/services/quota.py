@@ -16,15 +16,29 @@ from apps.billing.services import active_subscription, get_balance
 MEMBER_MAX_SECONDS = 30 * 60
 
 
+def fmt_seconds(seconds: int) -> str:
+    """把秒数写成人话，用于提示文案。
+
+    ★ 别用 `seconds // 60`：免费额度是 30 **秒**，整除后成了「0 分钟」，
+      用户看到「当前上限 0 分钟」会以为额度坏了（2026-11-09 冒烟发现）。
+    """
+    if seconds < 60:
+        return f"{seconds} 秒"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} 分钟"
+    return f"{seconds / 60:.1f} 分钟"
+
+
 def month_minutes_used(user) -> float:
     """本月已消耗的处理时长（分钟）。只算真正要占算力的状态。"""
-    from apps.tasks.models import Task, TaskStatus
+    from apps.tasks.models import IN_FLIGHT, Task, TaskStatus
 
     start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     total = (
         Task.objects.filter(
             user=user,
-            status__in=[TaskStatus.SUCCEEDED, TaskStatus.RUNNING, TaskStatus.PENDING],
+            status__in=[TaskStatus.SUCCEEDED, TaskStatus.PENDING, TaskStatus.AWAITING_CONFIRMATION,
+                        TaskStatus.NEEDS_MANUAL, *IN_FLIGHT],
             created_at__gte=start,
         ).aggregate(ms=Sum("duration_ms"))["ms"]
         or 0

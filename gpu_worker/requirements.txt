@@ -2,3 +2,12 @@
 # torch 单独装：体积大且要匹配 CUDA 版本，见 README 的安装命令。
 Django>=5.2,<6.0
 requests>=2.31
+pymysql>=1.1
+python-dotenv>=1.0
+opencv-python-headless>=4.10
+numpy>=1.26
+Pillow>=10.1
+scipy>=1.11
+simple-lama-inpainting>=0.1.0,<0.1.2
+torch>=2.3
+torchvision>=0.18

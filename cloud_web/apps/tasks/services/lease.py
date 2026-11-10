@@ -129,15 +129,46 @@ def heartbeat(
         task.lease_expires_at = now + timedelta(seconds=settings.LEASE_SECONDS)
         if progress is not None:
             task.progress = max(0.0, min(1.0, float(progress)))
-        if stage == "verifying":
+        confirmed = bool((task.params or {}).get("bbox_confirmed"))
+        if stage == "verifying" and confirmed:
             task.status = TaskStatus.VERIFYING
+        elif stage in ("extracting_frames", "locating_watermark") and not confirmed:
+            task.status = stage
+        elif stage == "removing_watermark" and confirmed and task.status != TaskStatus.VERIFYING:
+            task.status = TaskStatus.REMOVING_WATERMARK
         elif task.status == TaskStatus.LEASED:
-            task.status = TaskStatus.RUNNING
+            task.status = TaskStatus.REMOVING_WATERMARK if confirmed else TaskStatus.EXTRACTING_FRAMES
 
         task.save(update_fields=["lease_expires_at", "progress", "status"])
         if task.status != from_status:
             _log(task, from_status, task.status, actor=worker.name, stage=stage, message=message)
     return settings.LEASE_SECONDS
+
+
+def prepare_task(worker: WorkerNode, task_id: str, bbox: list, candidates: list) -> Task:
+    """定位结束后释放租约，等待用户确认，绝不直接开始渲染。"""
+    with transaction.atomic():
+        task = Task.objects.select_for_update().filter(id=task_id).first()
+        if task is None or task.worker_id != worker.id or task.status not in (
+            TaskStatus.LEASED, TaskStatus.EXTRACTING_FRAMES, TaskStatus.LOCATING_WATERMARK
+        ):
+            raise InvalidTransition("任务不在该节点的准备阶段")
+        if (task.params or {}).get("bbox_confirmed"):
+            raise InvalidTransition("任务已确认水印位置")
+        if task.lease_expires_at and task.lease_expires_at < timezone.now():
+            raise InvalidTransition("租约已过期")
+        from_status = task.status
+        params = dict(task.params or {})
+        params["locate_candidates"] = candidates[:5] or ([dict(zip(("x", "y", "w", "h"), bbox))] if bbox else [])
+        params["suggested_bbox"] = bbox
+        task.params = params
+        task.status = TaskStatus.AWAITING_CONFIRMATION
+        task.worker = None
+        task.lease_expires_at = None
+        task.progress = 0
+        task.save(update_fields=["params", "status", "worker", "lease_expires_at", "progress"])
+        _log(task, from_status, task.status, actor=worker.name, suggested_bbox=bbox)
+        return task
 
 
 # --------------------------------------------------------------------------
@@ -156,7 +187,7 @@ def complete_task(
             logger.info("complete 幂等命中 task=%s", task_id)
             return task
 
-        if task.status not in IN_FLIGHT:
+        if task.status != TaskStatus.VERIFYING or not (task.params or {}).get("bbox_confirmed"):
             raise InvalidTransition(f"任务处于 {task.status}，不能标记完成")
 
         from_status = task.status

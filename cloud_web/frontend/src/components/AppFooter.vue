@@ -46,7 +46,7 @@ const HAS_ICP = false; // 备案通过后改成 true
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--ink-400);
 }
 

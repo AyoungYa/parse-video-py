@@ -73,6 +73,10 @@ def mask_key(task_id: str) -> str:
     return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/mask.png"
 
 
+def keyframe_key(task_id: str, index: int = 0) -> str:
+    return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/keyframe-{index}.jpg"
+
+
 def result_key(task_id: str) -> str:
     return f"{settings.OSS_RESULT_PREFIX}{task_id}/out.mp4"
 
@@ -167,5 +171,6 @@ def delete_object(key: str) -> None:
 
 
 def delete_task_objects(task) -> None:
-    for key in (task.original_key, task.mask_key, task.result_key, task.report_key):
+    for key in (task.original_key, task.mask_key, task.result_key, task.report_key,
+                *(keyframe_key(str(task.id), i) for i in range(3))):
         delete_object(key)

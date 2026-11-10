@@ -7,11 +7,9 @@ services:
       # 容器内路径与宿主机不同，这里统一覆盖
       WM_SCRIPTS_DIR: /srv/scripts
       WORKSPACE_DIR: /srv/workspace
-      WORKER_DB_PATH: /srv/data/worker.sqlite3
     volumes:
       - ./scripts:/srv/scripts:ro # 修复脚本（只读，防止误改）
       - ./workspace:/srv/workspace
-      - ./data:/srv/data
     deploy:
       resources:
         reservations:

@@ -60,10 +60,33 @@
     "Microsoft YaHei", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
 
+  /* 字号：整套只由一个倍率控制。
+   * 1.5 = 正文 14px → 21px（2026-11-09 用户要求正文放大到 150%）。
+   * 页面/组件里一律引用 --fs-*，不要再写死 px；调大小只改 --fs-scale。 */
+  --fs-scale: 1.5;
+  --fs-caption: calc(11px * var(--fs-scale)); /* 图上小字、最次要说明 */
+  --fs-micro: calc(12px * var(--fs-scale)); /* 注脚、标签、辅助说明 */
+  --fs-small: calc(13px * var(--fs-scale)); /* 次级正文 */
+  --fs-body: calc(14px * var(--fs-scale)); /* 正文 */
+  --fs-md: calc(15px * var(--fs-scale)); /* 段落强调、表单标题 */
+  --fs-lg: calc(16px * var(--fs-scale)); /* 小节标题 */
+  --fs-xl: calc(22px * var(--fs-scale)); /* 页面主标题 */
+  --fs-title: calc(24px * var(--fs-scale)); /* 大标题（关于页等） */
+  --fs-display: calc(30px * var(--fs-scale)); /* 首屏标题 */
+  --fs-hero: calc(32px * var(--fs-scale)); /* 登录页 slogan */
+  --fs-huge: calc(44px * var(--fs-scale)); /* 积分等超大字 */
+
+  /* 控件高度跟随字号，否则 21px 的字会顶满 40px 的按钮 */
+  --ctl-h: 52px;
+  --ctl-h-lg: 58px;
+  --ctl-h-input: 56px;
+
+
   /* ── 覆盖 Element Plus 主题，让它的 toast 也长在这套体系里 ── */
   --el-color-primary: var(--brand);
   --el-color-success: var(--ok);
   --el-color-danger: var(--bad);
   --el-border-radius-base: 8px;
   --el-font-family: var(--font-sans);
+  --el-font-size-base: var(--fs-body);
 }

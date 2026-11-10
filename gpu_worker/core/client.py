@@ -103,6 +103,9 @@ class CloudClient:
             {"task_id": task_id, "result_key": result_key, "metrics": metrics, "report_key": report_key},
         ).json()
 
+    def prepared(self, task_id: str, bbox: list[int], candidates: list[dict]) -> dict:
+        return self._post("prepared", {"task_id": task_id, "bbox": bbox, "candidates": candidates}).json()
+
     def fail(
         self,
         task_id: str,

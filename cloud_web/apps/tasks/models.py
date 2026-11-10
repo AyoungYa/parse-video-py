@@ -27,6 +27,10 @@ class TaskStatus(models.TextChoices):
     AWAITING_UPLOAD = "awaiting_upload", "待上传"
     PENDING = "pending", "待处理"
     LEASED = "leased", "已领取"
+    EXTRACTING_FRAMES = "extracting_frames", "提取关键帧"
+    LOCATING_WATERMARK = "locating_watermark", "定位水印"
+    AWAITING_CONFIRMATION = "awaiting_confirmation", "待确认水印"
+    REMOVING_WATERMARK = "removing_watermark", "去水印中"
     RUNNING = "running", "处理中"
     VERIFYING = "verifying", "验收中"
     SUCCEEDED = "succeeded", "已完成"
@@ -39,7 +43,8 @@ class TaskStatus(models.TextChoices):
 
 
 #: 可被回收的「在途」状态
-IN_FLIGHT = (TaskStatus.LEASED, TaskStatus.RUNNING, TaskStatus.VERIFYING)
+IN_FLIGHT = (TaskStatus.LEASED, TaskStatus.EXTRACTING_FRAMES, TaskStatus.LOCATING_WATERMARK,
+             TaskStatus.REMOVING_WATERMARK, TaskStatus.RUNNING, TaskStatus.VERIFYING)
 
 
 class WorkerNode(models.Model):
@@ -119,8 +124,8 @@ class Task(models.Model):
         db_comment="所属用户 ID（逻辑外键，不建 DB 约束）",
     )
     status = models.CharField(
-        max_length=20, choices=TaskStatus.choices, default=TaskStatus.AWAITING_UPLOAD,
-        db_comment="任务状态；needs_manual=等用户手动框选水印",
+        max_length=24, choices=TaskStatus.choices, default=TaskStatus.AWAITING_UPLOAD,
+        db_comment="任务状态；定位后等待用户确认再去水印",
     )
 
     # OSS 对象键（不含 bucket）

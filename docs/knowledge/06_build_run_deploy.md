@@ -6,6 +6,33 @@ source_commit: dd55df3
 
 # 构建运行部署
 
+## 本地统一 Python 环境
+
+根目录 `pyproject.toml` 的 `services` extra 统一声明 `cloud_web` 与 `gpu_worker` 依赖。
+在仓库根目录执行 `uv sync --locked --extra services --extra web --extra cli --extra wm`，
+三个项目共用根目录 `.venv` 和 `uv.lock`。从子目录运行 Django 命令时使用
+`../.venv/bin/python manage.py ...`，保持工作目录在各自子项目，以读取各自的 `.env`。
+PyCharm 运行配置也使用根目录解释器。Docker 镜像仍从各服务的 requirements.txt 安装依赖。
+
+## cloud_web 云端 MySQL 测试
+
+`cloud_web/scripts/run_tests_cloud.py` 使用 `config.settings.test_cloud`，只读取
+`TEST_MYSQL_HOST/PORT/NAME/USER/PASSWORD`，可用 `TEST_MYSQL_SSL/SSL_CA`
+单独设置测试连接 TLS。`TEST_MYSQL_NAME` 必须以 `test_` 开头，且需提前创建。
+测试账号只应拥有该库的迁移与读写权限。运行器使用 `keepdb` 保留测试库，
+不会切换到 SQLite，也不会读取业务库的 `MYSQL_*` 账号。
+
+配置示例见 `cloud_web/.env.example`，运行方法见 `cloud_web/README.md`。
+
+## gpu_worker MySQL
+
+`gpu_worker` 的任务镜像和阶段日志也使用 MySQL，不再使用 SQLite。
+连接配置为 `WORKER_MYSQL_HOST/PORT/NAME/USER/PASSWORD`，可选
+`WORKER_MYSQL_SSL/SSL_CA/CONNECT_TIMEOUT`；必须先建独立库，再执行
+`gpu_worker/manage.py migrate`。任务权威状态仍由 `cloud_web` 管理。
+需要单文件初始化时使用 `gpu_worker/deploy/init_mysql.sql`；它汇总 worker 表、
+Django contenttypes 表与对应迁移记录，默认库名 `worker_logs`。仅在空库执行。
+
 ## 本地开发环境
 
 | 依赖 | 版本/要求 | 证据来源 |

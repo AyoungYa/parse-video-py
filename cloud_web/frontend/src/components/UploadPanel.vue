@@ -318,19 +318,19 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
 }
 
 .drop-title {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   color: var(--ink-900);
 }
 
 .drop-meta {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--ink-400);
   margin-top: 6px;
 }
 
 .drop-paste {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--ink-300);
   margin-top: 14px;
 }
@@ -362,7 +362,7 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
 }
 
 .filename {
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 500;
   color: var(--ink-900);
   word-break: break-all;
@@ -382,7 +382,7 @@ onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
   display: flex;
   align-items: baseline;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1.5;
 }
 

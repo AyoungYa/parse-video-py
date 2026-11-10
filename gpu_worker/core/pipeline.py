@@ -94,7 +94,49 @@ class Pipeline:
     # ------------------------------------------------------------------
     # 对外主入口
     # ------------------------------------------------------------------
+    def prepare(self, payload: dict, on_progress: ProgressFn) -> tuple[list[Path], list[int], list[dict]]:
+        """只抽关键帧和定位水印；用户确认前不运行修复。"""
+        task_id = payload["task_id"]
+        work = self.workspace / task_id
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True, exist_ok=True)
+        video = work / "input.mp4"
+        frames = [work / f"keyframe-{i}.jpg" for i in range(3)]
+        mask = work / "mask.png"
+        on_progress("extracting_frames", 0.02)
+        self._download(payload["video_url"], video)
+        if self.abort_event.is_set():
+            raise Aborted("租约丢失")
+        duration = max(0.0, float((payload.get("meta") or {}).get("duration_ms") or 0) / 1000)
+        for index, frame in enumerate(frames):
+            if self.abort_event.is_set():
+                raise Aborted("租约丢失")
+            sample_at = min(duration * (0.1 + index * 0.4), max(0.0, duration - 0.1))
+            cmd = ["ffmpeg", "-y", "-ss", str(sample_at), "-i", str(video),
+                   "-frames:v", "1", str(frame)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            if result.returncode or not frame.exists():
+                raise PipelineError("KEYFRAME_FAILED", result.stderr[-800:], retryable=True)
+            on_progress("extracting_frames", 0.1 + (index + 1) * 0.08)
+        on_progress("locating_watermark", 0.35)
+        stage = next(s for s in settings.WM_STAGES_TEMPLATE if s["name"] == "build_mask")
+        ctx = {"python": self.python, "scripts": str(self.scripts_dir), "input": str(video),
+               "mask": str(mask), "bbox": "", "device": self.device}
+        result = self._run_stage(stage, ctx, lambda frac: on_progress("locating_watermark", 0.35 + frac * 0.6))
+        candidates = self._locate_candidates(result.tail)
+        bbox_text = self._bbox_from_output(result.tail)
+        if result.exit_code == _EXIT_LOCATE_LOW_CONFIDENCE:
+            # 仍交给用户确认：可手动绘制；候选框只是建议。
+            bbox = [candidates[0][k] for k in ("x", "y", "w", "h")] if candidates else []
+        elif result.exit_code != 0 or not bbox_text:
+            raise PipelineError("LOCATE_FAILED", result.tail[-800:], retryable=True)
+        else:
+            bbox = [int(v) for v in bbox_text.split()]
+        return frames, bbox, candidates
+
     def run(self, payload: dict, on_progress: ProgressFn) -> PipelineOutcome:
+        if not (payload.get("params") or {}).get("bbox_confirmed"):
+            raise PipelineError("BBOX_UNCONFIRMED", "水印位置尚未由用户确认", retryable=False)
         task_id = payload["task_id"]
         work = self.workspace / task_id
         shutil.rmtree(work, ignore_errors=True)
@@ -134,6 +176,7 @@ class Pipeline:
             for idx, stage in enumerate(stages):
                 if self.abort_event.is_set():
                     raise Aborted("租约丢失，中止处理")
+                on_progress(stage["name"], 0.05 + idx / total * 0.9)
 
                 def stage_progress(frac: float, _idx=idx, _total=total) -> None:
                     overall = (_idx + max(0.0, min(1.0, frac))) / _total

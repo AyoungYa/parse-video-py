@@ -5,9 +5,11 @@ import CompareSlider from "@/components/CompareSlider.vue";
 import MetricReport from "@/components/MetricReport.vue";
 import TaskTimeline from "@/components/TaskTimeline.vue";
 import { api, formatDuration, formatSize, type TaskDetail } from "@/api/client";
+import { useSiteStore } from "@/stores/site";
 
 const route = useRoute();
 const router = useRouter();
+const site = useSiteStore();
 const taskId = String(route.params.id);
 
 const task = ref<TaskDetail | null>(null);
@@ -22,7 +24,7 @@ const TERMINAL = ["succeeded", "failed", "cancelled", "expired"];
 
 const isTerminal = computed(() => TERMINAL.includes(task.value?.status ?? ""));
 const isProcessing = computed(
-  () => !isTerminal.value && ["pending", "leased", "running", "verifying"].includes(task.value?.status ?? "")
+  () => !isTerminal.value && ["pending", "leased", "extracting_frames", "locating_watermark", "removing_watermark", "running", "verifying"].includes(task.value?.status ?? "")
 );
 
 const headline = computed(() => {
@@ -31,7 +33,10 @@ const headline = computed(() => {
   if (s === "failed") return "处理失败";
   if (s === "cancelled") return "已取消";
   if (s === "expired") return "已过期";
-  if (s === "needs_manual") return "需要你确认水印位置";
+  if (s === "needs_manual" || s === "awaiting_confirmation") return "需要你确认水印位置";
+  if (s === "extracting_frames") return "获取关键帧";
+  if (s === "locating_watermark") return "定位水印";
+  if (s === "removing_watermark") return "去水印中";
   if (s === "verifying") return "验收中";
   if (s === "running" || s === "leased") return "处理中";
   return "排队中";
@@ -49,7 +54,7 @@ const elapsedText = computed(() => {
 
 const remainingSeconds = computed<number | null>(() => {
   const t = task.value;
-  if (!t || t.status !== "running" || !t.progress) return null;
+  if (!t || !["running", "removing_watermark"].includes(t.status) || !t.progress) return null;
   const startStr = t.started_at || t.created_at;
   if (!startStr) return null;
   const elapsed = (now.value - new Date(startStr).getTime()) / 1000;
@@ -190,6 +195,7 @@ onBeforeUnmount(() => {
           :progress="task.progress"
           :remaining-seconds="remainingSeconds"
           :worker-offline="workerOffline"
+          :confirmed="Boolean(task.params?.bbox_confirmed)"
         />
         <hr class="divider" />
         <div class="row-between">
@@ -209,21 +215,20 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 自动定位没把握：转人工框选，任务没失败、积分也没退 -->
-      <div v-else-if="task.status === 'needs_manual'" class="card manual">
+      <div v-else-if="task.status === 'needs_manual' || task.status === 'awaiting_confirmation'" class="card manual">
         <div class="row" style="gap: 10px; flex-wrap: wrap">
           <span class="tag tag-warn">等你操作</span>
           <span class="micro muted">任务已暂停，不会自动失败，也不会扣第二次积分</span>
         </div>
-        <h2 class="h2" style="margin-top: 14px">这条的水印位置，得请你框一下</h2>
+        <h2 class="h2" style="margin-top: 14px">请确认水印位置</h2>
         <p class="small secondary" style="margin-top: 8px; line-height: 1.8">
-          自动识别对这条视频没把握（{{ task.locate_reason || "候选区域不够可信" }}）。
-          你只要在画面上拖个框圈住水印，我们就接着往下处理，前后大概十几秒。
+          请查看关键帧上的红框。位置准确可直接确认，也可以拖动红框或重新框选；确认后才会开始去水印。
         </p>
         <p v-if="task.locate_candidates?.length" class="micro muted" style="margin-top: 8px">
           已经帮你找了 {{ task.locate_candidates.length }} 个候选位置，进去点一下就能用。
         </p>
         <div class="row" style="margin-top: 20px; gap: 10px; flex-wrap: wrap">
-          <button class="btn btn-primary" type="button" @click="goMask">去框选水印</button>
+          <button class="btn btn-primary" type="button" @click="goMask">确认或调整水印位置</button>
           <button class="link-btn" type="button" :disabled="cancelling" @click="cancel">
             {{ cancelling ? "取消中…" : "不处理了，取消并退积分" }}
           </button>
@@ -267,14 +272,14 @@ onBeforeUnmount(() => {
           >
             报告 JSON
           </a>
-          <span class="micro muted action-hint">链接 10 分钟内有效 · 成片 24 小时后自动删除</span>
+          <span class="micro muted action-hint">链接 10 分钟内有效 · 成片 {{ site.retentionText }}后自动删除</span>
         </div>
       </template>
 
       <!-- 失败 / 取消 / 过期 -->
       <div v-else class="card">
         <p class="small" style="color: var(--ink-900)">
-          {{ task.error_message || (task.status === "expired" ? "素材已超过 24 小时保留期，已自动清理。" : "任务已结束。") }}
+          {{ task.error_message || (task.status === "expired" ? `素材已超过 ${site.retentionText} 保留期，已自动清理。` : "任务已结束。") }}
         </p>
         <p class="micro muted" style="margin-top: 8px">
           <template v-if="task.status === 'failed'">

@@ -27,6 +27,26 @@ cli = [
     "typer>=0.12",
     "rich>=13.0",
 ]
+# cloud_web 与 gpu_worker 共用根目录虚拟环境。
+services = [
+    "django>=5.2,<6.0",
+    "djangorestframework>=3.15",
+    "django-cors-headers>=4.4",
+    "pymysql>=1.1",
+    "oss2>=2.18",
+    "gunicorn>=22.0",
+    "alibabacloud-dysmsapi20170525>=2.1.0",
+    "alibabacloud-tea-openapi>=0.3.9",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+    "opencv-python-headless>=4.10",
+    "numpy>=1.26",
+    "pillow>=10.1",
+    "scipy>=1.11",
+    "simple-lama-inpainting>=0.1.0,<0.1.2",
+    "torch>=2.3",
+    "torchvision>=0.18",
+]
 # 去水印调参台（wm-studio）。与 web 一起装：uv pip install -e ".[web,wm]"
 # torch 体积大且需按平台选源，故不并入 web，单独成组避免拖重纯解析服务。
 wm = [
@@ -36,7 +56,7 @@ wm = [
     "scipy>=1.11",
     "pillow>=10.0",
     "numpy>=1.24,<2.0",
-    "simple-lama-inpainting>=0.1.2",
+    "simple-lama-inpainting>=0.1.0,<0.1.2",
     "imageio-ffmpeg>=0.5",
 ]
 dev = [

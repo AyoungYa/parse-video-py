@@ -11,6 +11,20 @@ export interface UploadPolicy {
   max_bytes: number;
 }
 
+/** 站点公开配置：文案里展示的保留天数等，跟着后端 OSS_RETENTION_DAYS 走。 */
+export interface SiteConfig {
+  retention_days: number;
+}
+
+/** 图形验证码挑战：image 是服务端渲染的 PNG data URI，答案不回传。 */
+export interface Captcha {
+  captcha_id: string;
+  image: string;
+  expires_in: number;
+  /** 仅本地开发（CAPTCHA_DEV_ECHO=1）回显，联调/自动化用 */
+  dev_code?: string;
+}
+
 /** 当前用户的额度快照，预检卡用它判断「这条能不能传」。 */
 export interface Quota {
   is_member: boolean;
@@ -55,6 +69,7 @@ export interface TaskDetail {
   width: number;
   height: number;
   fps: number;
+  params: { bbox_confirmed?: boolean; bbox?: BBox };
   metrics: Record<string, number | boolean>;
   all_green: boolean;
   points_cost: number;
@@ -65,6 +80,7 @@ export interface TaskDetail {
   finished_at: string | null;
   /** 原片签名地址（对比视图 / 框选页用），10 分钟有效 */
   preview_url?: string;
+  keyframe_urls?: string[];
   /** 成片签名地址 */
   download_url?: string;
   report_url?: string;
@@ -83,6 +99,10 @@ export type TaskStatus =
   | "awaiting_upload"
   | "pending"
   | "leased"
+  | "extracting_frames"
+  | "locating_watermark"
+  | "awaiting_confirmation"
+  | "removing_watermark"
   | "running"
   | "verifying"
   /** 自动定位没把握，等用户手动框选水印位置 */
@@ -129,9 +149,19 @@ http.interceptors.response.use(
 );
 
 export const api = {
-  /** 发送登录验证码。dev_code 只在本地开发（console 通道）时返回。 */
-  smsSend: (phone: string) =>
-    http.post<{ retry_after: number; dev_code?: string }>("/auth/sms/send", { phone }),
+  /** 站点公开配置（无需登录）：素材保留天数等可调参数。 */
+  siteConfig: () => http.get<SiteConfig>("/site/config"),
+
+  /** 获取一张图形验证码（发短信前必须先过它）。 */
+  captcha: () => http.get<Captcha>("/auth/captcha"),
+
+  /** 发送登录短信验证码。需带图形验证码答案；dev_code 只在本地开发时返回。 */
+  smsSend: (phone: string, captchaId: string, captchaCode: string) =>
+    http.post<{ retry_after: number; dev_code?: string }>("/auth/sms/send", {
+      phone,
+      captcha_id: captchaId,
+      captcha_code: captchaCode,
+    }),
   /** 验证码登录：新手机号自动建号。 */
   smsLogin: (phone: string, code: string) =>
     http.post<{ token: string; user: UserProfile; is_new: boolean }>("/auth/sms/login", {

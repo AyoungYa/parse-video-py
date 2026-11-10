@@ -29,9 +29,10 @@ from apps.billing.services import (
     points_for_duration,
 )
 
-from .models import Task, TaskStatus
+from .models import IN_FLIGHT, Task, TaskStatus
 from .serializers import TaskDetailSerializer, TaskListSerializer
 from .services import lease, oss
+from .services.quota import MEMBER_MAX_SECONDS, fmt_seconds
 from .services.quota import month_minutes_used as _month_minutes_used
 
 logger = logging.getLogger(__name__)
@@ -119,11 +120,16 @@ def confirm_upload(request, task_id):
         return Response({"code": "upload_missing", "message": "文件尚未上传成功"}, status=409)
 
     sub = active_subscription(user)
-    max_seconds = 30 * 60 if sub else settings.FREE_TRIAL_MAX_SECONDS
+    max_seconds = MEMBER_MAX_SECONDS if sub else settings.FREE_TRIAL_MAX_SECONDS
     if duration_ms / 1000 > max_seconds:
-        hint = "订阅后可处理 30 分钟内视频" if not sub else "单条视频请控制在 30 分钟内"
+        limit = fmt_seconds(max_seconds)
+        hint = (
+            f"订阅后可处理 {fmt_seconds(MEMBER_MAX_SECONDS)}内视频"
+            if not sub
+            else f"单条视频请控制在 {limit} 内"
+        )
         return Response(
-            {"code": "duration_exceeded", "message": f"当前上限 {max_seconds // 60} 分钟，{hint}"},
+            {"code": "duration_exceeded", "message": f"当前上限 {limit}，{hint}"},
             status=422,
         )
 
@@ -139,7 +145,11 @@ def confirm_upload(request, task_id):
             task.fps = float(request.data.get("fps") or 0)
             task.size_bytes = oss.object_size(task.original_key) or task.size_bytes
             task.points_cost = cost
-            task.params = request.data.get("params") or {}
+            params = request.data.get("params") or {}
+            if not isinstance(params, dict):
+                params = {}
+            # 首次上传不能绕过关键帧定位与用户确认。
+            task.params = {k: v for k, v in params.items() if k not in ("bbox", "bbox_confirmed")}
             task.status = TaskStatus.PENDING
             task.save(
                 update_fields=[
@@ -178,14 +188,16 @@ def submit_bbox(request, task_id):
         except Task.DoesNotExist:
             return Response({"code": "not_found", "message": "任务不存在"}, status=404)
 
-        if task.status != TaskStatus.NEEDS_MANUAL:
+        if task.status not in (TaskStatus.NEEDS_MANUAL, TaskStatus.AWAITING_CONFIRMATION):
             return Response(
                 {"code": "invalid_state", "message": f"任务当前为 {task.status}，不需要手动框选"},
                 status=409,
             )
 
         bbox = _parse_bbox(request.data.get("bbox"))
-        if bbox is None:
+        if bbox is None or (task.width and bbox[0] + bbox[2] > task.width) or (
+            task.height and bbox[1] + bbox[3] > task.height
+        ):
             return Response(
                 {"code": "bad_bbox", "message": "框选区域无效，请重新框选"}, status=400
             )
@@ -193,6 +205,7 @@ def submit_bbox(request, task_id):
         from_status = task.status
         params = dict(task.params or {})
         params["bbox"] = list(bbox)
+        params["bbox_confirmed"] = True
         params.pop("locate_candidates", None)
         task.params = params
         task.status = TaskStatus.PENDING
@@ -265,10 +278,14 @@ def task_detail(request, task_id):
         data["download_url"] = oss.presign_get(task.result_key, expire_seconds=600)
         data["report_url"] = oss.presign_get(task.report_key, expire_seconds=600) if task.report_key else ""
     # 人工框选：把候选框与建议尺寸一并给前端
-    if task.status == TaskStatus.NEEDS_MANUAL:
+    if task.status in (TaskStatus.NEEDS_MANUAL, TaskStatus.AWAITING_CONFIRMATION):
         params = task.params or {}
         data["locate_candidates"] = params.get("locate_candidates") or []
         data["locate_reason"] = task.error_message
+        data["keyframe_urls"] = [
+            oss.presign_get(oss.keyframe_key(str(task.id), i), expire_seconds=600)
+            for i in range(3)
+        ] if task.status == TaskStatus.AWAITING_CONFIRMATION else []
         # 框选页要按原视频尺寸换算坐标
         data["frame_width"] = task.width
         data["frame_height"] = task.height
@@ -287,7 +304,7 @@ def cancel_task(request, task_id):
 
         if task.is_terminal:
             return Response({"code": "invalid_state", "message": "任务已结束"}, status=409)
-        if task.status in (TaskStatus.LEASED, TaskStatus.RUNNING, TaskStatus.VERIFYING):
+        if task.status in IN_FLIGHT:
             return Response(
                 {"code": "in_progress", "message": "任务正在处理，请稍候重试取消"}, status=409
             )

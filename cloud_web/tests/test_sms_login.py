@@ -17,14 +17,29 @@ from apps.accounts.models import SmsCode, User
 PHONE = "13800138000"
 
 
-@override_settings(SMS_PROVIDER="console", SMS_DEV_ECHO=True)
+@override_settings(SMS_PROVIDER="console", SMS_DEV_ECHO=True, CAPTCHA_DEV_ECHO=True)
 class SmsLoginTests(TestCase):
     def setUp(self):
         cache.clear()  # 限流计数在缓存里，避免测试之间互相影响
         self.client = APIClient()
 
+    def _captcha(self) -> dict:
+        """取一张图形验证码（dev 回显答案）。短信发送前必须先过这道闸。"""
+        r = self.client.get("/api/v1/auth/captcha")
+        self.assertEqual(r.status_code, 200, r.data)
+        return r.data
+
     def _send(self, phone: str = PHONE) -> dict:
-        r = self.client.post("/api/v1/auth/sms/send", {"phone": phone}, format="json")
+        cap = self._captcha()
+        r = self.client.post(
+            "/api/v1/auth/sms/send",
+            {
+                "phone": phone,
+                "captcha_id": cap["captcha_id"],
+                "captcha_code": cap["dev_code"],
+            },
+            format="json",
+        )
         self.assertEqual(r.status_code, 200, r.data)
         return r.data
 
@@ -111,7 +126,16 @@ class SmsLoginTests(TestCase):
 
     def test_resend_within_60s_rejected(self):
         self._send()
-        r = self.client.post("/api/v1/auth/sms/send", {"phone": PHONE}, format="json")
+        cap = self._captcha()
+        r = self.client.post(
+            "/api/v1/auth/sms/send",
+            {
+                "phone": PHONE,
+                "captcha_id": cap["captcha_id"],
+                "captcha_code": cap["dev_code"],
+            },
+            format="json",
+        )
         self.assertEqual(r.status_code, 429)
         self.assertEqual(r.data["code"], "sms_too_frequent")
         self.assertGreater(r.data["retry_after"], 0)
@@ -129,7 +153,16 @@ class SmsLoginTests(TestCase):
             SmsCode.objects.filter(pk=record.pk).update(
                 created_at=now - timedelta(minutes=30 - i * 2)
             )
-        r = self.client.post("/api/v1/auth/sms/send", {"phone": PHONE}, format="json")
+        cap = self._captcha()
+        r = self.client.post(
+            "/api/v1/auth/sms/send",
+            {
+                "phone": PHONE,
+                "captcha_id": cap["captcha_id"],
+                "captcha_code": cap["dev_code"],
+            },
+            format="json",
+        )
         self.assertEqual(r.status_code, 429)
         self.assertEqual(r.data["code"], "sms_daily_phone_cap")
 
@@ -140,7 +173,16 @@ class SmsLoginTests(TestCase):
             self.assertEqual(r.data["code"], "invalid_phone")
 
     def test_dev_echo_can_be_disabled(self):
+        cap = self._captcha()
         with override_settings(SMS_DEV_ECHO=False):
-            r = self.client.post("/api/v1/auth/sms/send", {"phone": PHONE}, format="json")
+            r = self.client.post(
+                "/api/v1/auth/sms/send",
+                {
+                "phone": PHONE,
+                "captcha_id": cap["captcha_id"],
+                "captcha_code": cap["dev_code"],
+            },
+                format="json",
+            )
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("dev_code", r.data)

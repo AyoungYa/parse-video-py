@@ -19,8 +19,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl tini \
     && rm -rf /var/lib/apt/lists/*
 
-# 依赖由 uv 管理（pyproject.toml + uv.lock）。requirements.txt 是 `uv export` 的产物，
-# 也是全量固定版本，所以镜像里直接用 pip 装，不必为了构建再拉 uv。
+# 镜像使用服务自己的 requirements.txt；本地开发的统一环境由根目录 uv.lock 管理。
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -31,10 +31,10 @@ function open() {
       <span class="micro muted num">{{ meta }}</span>
     </div>
     <div class="chip-title">{{ title }}</div>
-    <div v-if="task.status === 'running'" class="bar" style="margin-top: 9px">
+    <div v-if="task.status === 'running' || task.status === 'removing_watermark'" class="bar" style="margin-top: 9px">
       <i :style="{ width: `${Math.max(3, task.progress * 100)}%` }" />
     </div>
-    <div v-else class="chip-foot micro muted num">{{ task.finished_at ? "已交付" : "处理中" }}</div>
+    <div v-else class="chip-foot micro muted num">{{ task.finished_at ? "已交付" : task.status === "awaiting_confirmation" ? "等待确认水印" : "处理中" }}</div>
   </button>
 </template>
 
@@ -66,7 +66,7 @@ function open() {
 }
 
 .chip-title {
-  font-size: 13px;
+  font-size: var(--fs-small);
   color: var(--ink-900);
   white-space: nowrap;
   overflow: hidden;

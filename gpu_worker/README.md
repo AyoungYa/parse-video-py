@@ -9,7 +9,7 @@ Django 服务，跑在**你自己的 PC**（或 Mac）上。它只做一件事�
 - 长轮询云端 `/worker/claim` 领任务（拿到的是签名 URL，不持有 OSS 凭证）
 - 从 OSS 下载原片 → **自动定位水印 → 建 mask → LaMa 修复 → 自动验收 → 决策树修复** → 回传成片
 - 心跳续租、上报进度与验收指标
-- 本地状态面板（`http://127.0.0.1:8040/`），看清「这台机器在干什么」
+- 本地状态面板（`http://127.0.0.1:8040/`），看清「这台机器在干什么」；阶段日志写入独立 MySQL 库
 
 ---
 
@@ -99,29 +99,39 @@ nvidia-smi
 
 ## 安装（Windows 原生，推荐）
 
+三个项目统一使用仓库根目录的 `.venv` 和 `uv.lock`。CUDA 版 PyTorch 需要按显卡驱动匹配，
+可在同步后覆盖安装。覆盖后使用根目录 `.venv/Scripts/python.exe` 启动，
+避免再次同步替换 CUDA 版本。
+
 ```powershell
-cd gpu_worker
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+cd parse-video-py
+uv sync --locked --extra services --extra web --extra cli --extra wm
 
 # torch 必须匹配你的 CUDA 版本，别直接 pip install torch
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+uv pip install --python .venv/Scripts/python.exe torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
+cd gpu_worker
 copy .env.example .env
-notepad .env      # 填 WORKER_TOKEN / WM_SCRIPTS_DIR / WORKSPACE_DIR
+notepad .env      # 填 WORKER_TOKEN / WORKER_MYSQL_* / WM_SCRIPTS_DIR / WORKSPACE_DIR
 ```
 
 `.env` 里 `WM_SCRIPTS_DIR` 默认指向本仓库 `scripts/`（**自带自动定位能力**，比 skill 版强）。
 若指向 skill 的 `scripts/`，只能跑人工给 bbox 的流程。
 
+先创建独立的 MySQL 数据库和专用账号，并在 `.env` 填入
+`WORKER_MYSQL_HOST/PORT/NAME/USER/PASSWORD`。公网连接可通过
+`WORKER_MYSQL_SSL=1` 开启 TLS。不要把 worker 日志写入 cloud_web 的业务库。
+完整建表 SQL 见 `deploy/init_mysql.sql`，包含 worker 表、Django contenttypes 表
+和迁移记录。在空库执行该脚本后，运行下方的 `manage.py migrate` 核对迁移状态；
+也可以只运行 `migrate` 让 Django 建全部表。
+
 初始化并试跑一次：
 
 ```powershell
-python manage.py migrate
-python manage.py run_worker --dry-run   # 只领任务不真跑，验证连通性
-python manage.py run_worker --once      # 处理一条就退出，验证管线
-python manage.py run_worker             # 常驻
+..\.venv\Scripts\python.exe manage.py migrate
+..\.venv\Scripts\python.exe manage.py run_worker --dry-run   # 只领任务不真跑，验证连通性
+..\.venv\Scripts\python.exe manage.py run_worker --once      # 处理一条就退出，验证管线
+..\.venv\Scripts\python.exe manage.py run_worker             # 常驻
 ```
 
 本地面板：另开一个终端 `python manage.py runserver 8040`，访问 http://127.0.0.1:8040/
@@ -146,7 +156,7 @@ docker compose logs -f worker
 
 1. 任务计划程序 → 创建任务
 2. 触发器：登录时（勾选「延迟 30 秒」让驱动先就位）
-3. 操作：`C:\path\to\gpu_worker\.venv\Scripts\python.exe`，参数 `manage.py run_worker`，起始于 `C:\path\to\gpu_worker`
+3. 操作：`C:\path\to\parse-video-py\.venv\Scripts\python.exe`，参数 `manage.py run_worker`，起始于 `C:\path\to\parse-video-py\gpu_worker`
 4. 设置：勾选「如果任务失败，每 1 分钟重启，最多 999 次」
 
 **Linux/macOS（systemd）**
@@ -158,7 +168,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=/srv/gpu_worker
-ExecStart=/srv/gpu_worker/.venv/bin/python manage.py run_worker
+ExecStart=/srv/.venv/bin/python manage.py run_worker
 Restart=always
 RestartSec=10
 

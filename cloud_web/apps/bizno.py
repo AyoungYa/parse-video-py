@@ -22,6 +22,7 @@ from datetime import datetime
 PREFIX = {
     "user": "U",
     "sms_code": "C",
+    "captcha": "P",  # P = picture challenge
     "auth_token": "K",
     "worker_node": "W",
     "task": "T",
@@ -49,6 +50,10 @@ def gen_user_no() -> str:
 
 def gen_sms_code_no() -> str:
     return _gen("sms_code")
+
+
+def gen_captcha_no() -> str:
+    return _gen("captcha")
 
 
 def gen_auth_token_no() -> str:

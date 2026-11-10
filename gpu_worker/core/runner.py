@@ -132,12 +132,33 @@ class Runner:
         hb = _Heartbeat(self.client, task_id, self.pipeline, settings.HEARTBEAT_INTERVAL)
         hb.start()
         started = time.monotonic()
+        reported_stage = ""
 
         def on_progress(stage: str, frac: float) -> None:
+            nonlocal reported_stage
             hb.update(stage, frac)
             LocalTask.objects.filter(pk=local.pk).update(stage=stage, progress=frac)
+            cloud_stage = {
+                "download": "extracting_frames" if payload.get("phase") == "prepare" else "removing_watermark",
+                "build_mask": "removing_watermark", "lama_apply": "removing_watermark",
+                "texture_fix": "removing_watermark", "texture_fix_rowinterp": "removing_watermark",
+                "verify": "verifying", "verify_final": "verifying",
+            }.get(stage, stage)
+            if cloud_stage != reported_stage and cloud_stage in (
+                "extracting_frames", "locating_watermark", "removing_watermark", "verifying"
+            ):
+                self.client.heartbeat(task_id, stage=cloud_stage, progress=frac)
+                reported_stage = cloud_stage
 
         try:
+            if payload.get("phase") == "prepare":
+                frames, bbox, candidates = self.pipeline.prepare(payload, on_progress)
+                for url, frame in zip(payload["keyframe_upload_urls"], frames, strict=True):
+                    self.pipeline.upload(url, frame, content_type="image/jpeg")
+                hb.stop()
+                self.client.prepared(task_id, bbox, candidates)
+                LocalTask.objects.filter(pk=local.pk).update(stage="awaiting_confirmation", progress=0)
+                return
             outcome = self.pipeline.run(payload, on_progress)
 
             for st in outcome.stages:
@@ -161,6 +182,8 @@ class Runner:
                 except PipelineError as exc:
                     # 报告传不上去不该判整单失败：成片才是交付物
                     logger.warning("报告回传失败（不影响交付）：%s", exc)
+
+            on_progress("verifying", 0.99)
 
             hb.stop()
             self.client.complete(

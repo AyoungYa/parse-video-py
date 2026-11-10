@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
+import BrandLogo from "@/components/BrandLogo.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -20,11 +21,7 @@ function logout() {
   <header v-if="show" class="topbar">
     <div class="topbar-inner">
       <router-link to="/" class="brand" aria-label="无痕匠首页">
-        <svg class="brand-mark" viewBox="0 0 22 22" aria-hidden="true">
-          <rect x="1.4" y="1.4" width="19.2" height="19.2" rx="5.6" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <path d="M6.4 13.6L13.2 6.8a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3l-3.6 3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-          <path d="M6.4 13.6h6.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        </svg>
+        <BrandLogo :size="28" />
         <span class="brand-name">无痕匠</span>
       </router-link>
 
@@ -56,7 +53,7 @@ function logout() {
 .topbar-inner {
   max-width: var(--page-w);
   margin: 0 auto;
-  height: 56px;
+  height: 72px;
   padding: 0 20px;
   display: flex;
   align-items: center;
@@ -75,15 +72,8 @@ function logout() {
   color: var(--ink-900);
 }
 
-.brand-mark {
-  width: 22px;
-  height: 22px;
-  color: var(--brand);
-  flex-shrink: 0;
-}
-
 .brand-name {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 500;
   letter-spacing: 0.04em;
 }
@@ -92,19 +82,19 @@ function logout() {
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  font-size: 13px;
+  font-size: var(--fs-small);
 }
 
 .points-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 10px;
+  height: 38px;
+  padding: 0 12px;
   border-radius: var(--r-pill);
   background: var(--brand-wash);
   color: var(--brand);
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 
 .points-pill:hover {
@@ -113,13 +103,13 @@ function logout() {
 }
 
 .coin {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
 }
 
 .who {
   color: var(--ink-600);
-  font-size: 13px;
+  font-size: var(--fs-small);
 }
 
 .who:hover {
@@ -128,7 +118,7 @@ function logout() {
 
 .link-btn {
   color: var(--ink-400);
-  font-size: 13px;
+  font-size: var(--fs-small);
 }
 
 .link-btn:hover {

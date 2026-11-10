@@ -17,12 +17,13 @@ const props = withDefaults(
   defineProps<{
     modelValue: BBox | null;
     videoUrl?: string;
+    imageUrls?: string[];
     width?: number;
     height?: number;
     candidates?: LocateCandidate[];
     durationSeconds?: number;
   }>(),
-  { videoUrl: "", width: 1920, height: 1080, candidates: () => [], durationSeconds: 10 }
+  { videoUrl: "", imageUrls: () => [], width: 1920, height: 1080, candidates: () => [], durationSeconds: 10 }
 );
 
 const emit = defineEmits<{ "update:modelValue": [box: BBox | null] }>();
@@ -32,6 +33,7 @@ const videoRef = ref<HTMLVideoElement | null>(null);
 const mediaError = ref(false);
 const mediaReady = ref(false);
 const seek = ref(0);
+const selectedFrame = ref(0);
 const videoDuration = ref(0);
 
 const W = computed(() => props.width || 1920);
@@ -241,7 +243,9 @@ defineExpose({ clearBox, applyCandidate });
       @pointerup="onUp"
       @pointercancel="onUp"
     >
+      <img v-if="imageUrls.length" class="media" :src="imageUrls[selectedFrame]" alt="视频关键帧" @error="mediaError = true" />
       <video
+        v-else
         v-show="!mediaError"
         ref="videoRef"
         class="media"
@@ -350,7 +354,14 @@ defineExpose({ clearBox, applyCandidate });
     </div>
 
     <!-- 时间轴：换一帧看清水印 -->
-    <div class="timeline">
+    <div v-if="imageUrls.length" class="timeline">
+      <span class="micro muted">关键帧</span>
+      <button v-for="(_, i) in imageUrls" :key="i" type="button" class="btn btn-secondary btn-sm"
+        :aria-pressed="selectedFrame === i" @click="selectedFrame = i; mediaError = false">
+        {{ i === 0 ? "前段" : i === 1 ? "中段" : "后段" }}
+      </button>
+    </div>
+    <div v-else class="timeline">
       <label class="micro muted" for="seek">画面位置</label>
       <input
         id="seek"
@@ -455,8 +466,8 @@ defineExpose({ clearBox, applyCandidate });
 }
 
 .cand {
-  fill: rgba(14, 92, 74, 0.06);
-  stroke: #7fd6b4;
+  fill: rgba(220, 38, 38, 0.06);
+  stroke: #ff5555;
   stroke-dasharray: 10 7;
   cursor: pointer;
 }
@@ -473,8 +484,8 @@ defineExpose({ clearBox, applyCandidate });
 }
 
 .chosen {
-  fill: rgba(14, 92, 74, 0.08);
-  stroke: #ffffff;
+  fill: rgba(220, 38, 38, 0.08);
+  stroke: #ff3636;
   cursor: move;
 }
 
@@ -565,9 +576,9 @@ defineExpose({ clearBox, applyCandidate });
 }
 
 .btn-sm {
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
+  height: 44px;
+  padding: 0 14px;
+  font-size: var(--fs-micro);
 }
 
 .btn-sm.active {
@@ -590,9 +601,9 @@ defineExpose({ clearBox, applyCandidate });
 }
 
 .field-wrap .input {
-  width: 80px;
-  height: 34px;
-  padding: 0 8px;
+  width: 96px;
+  height: 50px;
+  padding: 0 10px;
 }
 
 .dims {

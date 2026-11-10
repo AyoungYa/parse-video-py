@@ -1,6 +1,3 @@
-# ⚠️ 自动生成，请勿手改。依赖请改 pyproject.toml，然后执行：
-#    uv lock && uv export --no-hashes --no-emit-project --no-header -o requirements.txt
-# 这份文件只为 Docker 构建（免拉 uv 镜像）和兼容 pip 的托管环境保留，版本由 uv.lock 锁定。
 aiofiles==24.1.0
     # via alibabacloud-credentials
 aiohappyeyeballs==2.7.1
@@ -88,6 +85,8 @@ multidict==7.2.1
     #   aiohttp
     #   yarl
 oss2==2.19.1
+    # via cloud-web
+pillow==13.0.0
     # via cloud-web
 propcache==0.5.4
     # via

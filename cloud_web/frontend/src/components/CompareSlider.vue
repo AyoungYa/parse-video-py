@@ -282,7 +282,7 @@ function onKey(e: KeyboardEvent) {
 .vlabel {
   position: absolute;
   bottom: 12px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: rgba(255, 255, 255, 0.9);
   background: rgba(0, 0, 0, 0.42);
   padding: 3px 8px;
@@ -302,7 +302,7 @@ function onKey(e: KeyboardEvent) {
   position: absolute;
   top: 12px;
   right: 12px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: rgba(255, 255, 255, 0.72);
   pointer-events: none;
 }
@@ -320,10 +320,10 @@ function onKey(e: KeyboardEvent) {
 .handle {
   position: absolute;
   top: 50%;
-  width: 30px;
-  height: 30px;
-  margin-left: -15px;
-  margin-top: -15px;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  margin-top: -20px;
   border-radius: 50%;
   background: #fff;
   color: var(--ink-900);
@@ -351,7 +351,7 @@ function onKey(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 
 .toolbar {
@@ -371,13 +371,13 @@ function onKey(e: KeyboardEvent) {
 }
 
 .seg button {
-  height: 26px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 14px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--ink-600);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   font-family: inherit;
 }
@@ -391,14 +391,14 @@ function onKey(e: KeyboardEvent) {
 .tool {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 11px;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--surface);
   color: var(--ink-600);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   font-family: inherit;
 }
@@ -443,7 +443,7 @@ function onKey(e: KeyboardEvent) {
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: transparent;
   color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   font-family: inherit;
 }

@@ -18,15 +18,16 @@ Django + DRF + MySQL + 阿里云 OSS，前端 Vue 3 + Vite。
 
 ## 本地跑起来（5 分钟）
 
-依赖用 **uv** 管理（`pyproject.toml` 定义 + `uv.lock` 锁定）。装 uv：
+本地依赖由仓库根目录的 **uv** 管理（根目录 `pyproject.toml` + `uv.lock`）。装 uv：
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh      # 已有可跳过
 ```
 
 ```bash
+cd parse-video-py
+uv sync --locked --extra services --extra web --extra cli --extra wm  # 统一安装到根目录 .venv
 cd cloud_web
-uv sync                       # 创建 .venv 并按 uv.lock 装依赖（等价 venv + pip install）
 
 cp .env.example .env && vim .env     # 必填：MYSQL_HOST/PORT/NAME/USER/PASSWORD
 ```
@@ -38,10 +39,10 @@ cp .env.example .env && vim .env     # 必填：MYSQL_HOST/PORT/NAME/USER/PASSWO
 所以 Docker 的 `env_file` 不会被文件覆盖），不用每次 `export`：
 
 ```bash
-uv run python scripts/check_db.py     # 先自检：连通性 / 库 / 字符集 / 权限 / TLS
-uv run python manage.py migrate
-uv run python manage.py createsuperuser
-uv run python manage.py runserver 8000      # http://localhost:8000/healthz
+../.venv/bin/python scripts/check_db.py     # 先自检：连通性 / 库 / 字符集 / 权限 / TLS
+../.venv/bin/python manage.py migrate
+../.venv/bin/python manage.py createsuperuser
+../.venv/bin/python manage.py runserver 8000      # http://localhost:8000/healthz
 ```
 
 `.env` 里没填 MySQL 时不会悄悄退回 SQLite，而是直接报：
@@ -57,12 +58,24 @@ uv run python manage.py runserver 8000      # http://localhost:8000/healthz
 2. 安全组/防火墙放行 3306（生产环境建议只放行应用服务器 IP，不要对 0.0.0.0/0 开）；
 3. 库已建好且字符集 utf8mb4：`CREATE DATABASE wuhenjiang CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;`
 
-`migrate` 只需 `CREATE/ALTER/INDEX` 权限；**跑测试还需要 `CREATE DATABASE` 权限**
-（Django 会建 `test_wuhenjiang` 库再销毁）。没有这个权限时给账号补一句：
+`migrate` 只需 `CREATE/ALTER/INDEX` 权限；测试请使用下方的独立账号和测试库。
+例如提前创建测试库并授权：
 
 ```sql
-GRANT ALL PRIVILEGES ON `test_wuhenjiang`.* TO 'wuhenjiang'@'%';
+GRANT ALL PRIVILEGES ON `test_wuhenjiang`.* TO 'test_runner'@'%';
 ```
+
+云端 MySQL 测试使用独立的 `TEST_MYSQL_*` 配置，不读取上面的业务库账号。
+在 `.env` 填入 `TEST_MYSQL_HOST/PORT/NAME/USER/PASSWORD` 后运行：
+
+```bash
+../.venv/bin/python scripts/run_tests_cloud.py
+../.venv/bin/python scripts/run_tests_cloud.py tests.test_lease_flow
+```
+
+`TEST_MYSQL_NAME` 必须是 `test_` 前缀的独立数据库，需提前创建。
+测试库默认保留供后续测试复用。测试账号需要该库的迁移和读写权限，
+不应拥有业务库的写权限。
 
 前端另开一个终端：
 
@@ -74,18 +87,17 @@ npm run dev          # http://localhost:5173，/api 已代理到 8000
 
 ### 依赖怎么改
 
-**只改 `pyproject.toml`**，别直接 `pip install`（改了也不进 lock，换台机器就跑不起来）：
+**只改仓库根目录的 `pyproject.toml`**，别直接 `pip install`（改了也不进 lock，换台机器就跑不起来）：
 
 ```bash
 uv add "some-package>=1.0"     # 自动更新 pyproject + lock
 uv lock                        # 手改 pyproject 后重新锁定
-uv sync                        # 同步到 .venv
+uv sync --extra services --extra web --extra cli --extra wm  # 同步到仓库根目录 .venv
 
-# 部署用的固定版本清单（Dockerfile 读它，别手改）：
-uv export --no-hashes --no-emit-project --no-header -o requirements.txt
+# Docker 部署依赖另见 cloud_web/requirements.txt。
 ```
 
-`uv.lock` 要提交进 git —— 它是唯一保证「本地能跑 = 线上能跑」的东西。
+根目录 `uv.lock` 要提交进 git，供本地统一环境复现。
 
 ## 生产部署
 
@@ -139,10 +151,10 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 配置填完/改动后按顺序跑：
 
 ```bash
-uv run python scripts/check_db.py        # 数据库连通性
-uv run python scripts/check_oss.py       # OSS 六项：配置/endpoint 形态/地域/SDK/签名URL/PostObject
-uv run python scripts/e2e_oss.py         # 真实端到端：浏览器直传→确认→签名下载→worker回传（会写对象，跑完自清）
-uv run python scripts/run_tests_local.py # 本地 MySQL 跑单测（远程账号缺 CREATE DATABASE 时用这个）
+../.venv/bin/python scripts/check_db.py        # 数据库连通性
+../.venv/bin/python scripts/check_oss.py       # OSS 六项：配置/endpoint 形态/地域/SDK/签名URL/PostObject
+../.venv/bin/python scripts/e2e_oss.py         # 真实端到端：浏览器直传→确认→签名下载→worker回传（会写对象，跑完自清）
+../.venv/bin/python scripts/run_tests_local.py # 本地 MySQL 跑单测（远程账号缺 CREATE DATABASE 时用这个）
 ```
 
 `check_oss.py` 与 `e2e_oss.py` 都会在 `uploads/__probe__*/` 下写临时对象并在结束时删除；
@@ -161,7 +173,7 @@ uv run python scripts/run_tests_local.py # 本地 MySQL 跑单测（远程账号
 ## 跑测试
 
 ```bash
-uv run python manage.py test tests -v 2
+../.venv/bin/python manage.py test tests -v 2
 ```
 
 测试会连 `.env` 里的同一个 MySQL 实例，**建一个 `test_` 前缀的库跑完即销毁**

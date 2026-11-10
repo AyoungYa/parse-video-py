@@ -22,6 +22,7 @@ from django.utils import timezone
 from apps.bizno import (
     NO_MAX_LENGTH,
     gen_auth_token_no,
+    gen_captcha_no,
     gen_sms_code_no,
     gen_user_no,
 )
@@ -127,6 +128,66 @@ class SmsCode(models.Model):
         import hashlib
 
         return hashlib.sha256(code.encode()).hexdigest()
+
+
+class CaptchaChallenge(models.Model):
+    """图形验证码挑战。
+
+    为什么落库而不是用 cache：Django 默认 locmem 缓存是**每进程一份**，
+    线上 gunicorn 多 worker 时 A 进程签发的挑战 B 进程查不到 → 随机失败。
+    表只有几百字节一行，签发时顺手清过期行，成本可以忽略。
+
+    只存哈希；2 分钟有效、核销即作废、错 3 次作废。
+    """
+
+    captcha_no = models.CharField(
+        "挑战号", max_length=NO_MAX_LENGTH, default=gen_captcha_no, editable=False,
+        db_comment="对外挑战号 P+日期+随机，前端凭它回传答案",
+    )
+    code_hash = models.CharField(
+        "答案哈希", max_length=64,
+        db_comment="答案 SHA-256（带挑战号加盐），明文不落库",
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_comment="签发时间",
+    )
+    expires_at = models.DateTimeField(
+        db_comment="过期时间（默认签发后 2 分钟）",
+    )
+    used_at = models.DateTimeField(
+        null=True, blank=True,
+        db_comment="核销时间；非空表示已使用",
+    )
+    attempts = models.PositiveSmallIntegerField(
+        "已尝试次数", default=0,
+        db_comment="校验尝试次数，达 3 次作废",
+    )
+    ip = models.GenericIPAddressField(
+        "请求 IP", null=True, blank=True,
+        db_comment="请求来源 IP，用于限流与审计",
+    )
+
+    class Meta:
+        # ★ 表名用短名 captcha：MySQL 索引名上限 30 字符，
+        #   idx_captcha_challenge_expires_at 会超长（E034），别改回去
+        db_table = "captcha"
+        db_table_comment = "图形验证码挑战：只存哈希，2 分钟有效、单次核销、错 3 次作废"
+        verbose_name = "图形验证码"
+        verbose_name_plural = "图形验证码"
+        constraints = [
+            models.UniqueConstraint(fields=["captcha_no"], name="uniq_captcha_no"),
+        ]
+        indexes = [
+            models.Index(fields=["expires_at"], name="idx_captcha_expires_at"),
+        ]
+
+    @staticmethod
+    def hash_code(captcha_no: str, answer: str) -> str:
+        """答案按「挑战号 + 大写答案」哈希：同一答案在不同挑战里哈希不同。"""
+        import hashlib
+
+        return hashlib.sha256(f"{captcha_no}:{answer.upper()}".encode()).hexdigest()
 
 
 class AuthToken(models.Model):

@@ -5,8 +5,35 @@
 """
 
 from django.test import SimpleTestCase
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from core.pipeline import Pipeline, _normalize_metrics, _parse_progress
+from core.pipeline import Pipeline, StageResult, _normalize_metrics, _parse_progress
+
+
+class ConfirmationBoundaryTest(SimpleTestCase):
+    def test_prepare_stops_after_keyframe_and_location(self):
+        with TemporaryDirectory() as tmp:
+            pipeline = Pipeline(scripts_dir=Path(tmp), workspace=Path(tmp))
+            payload = {"task_id": "example", "video_url": "https://example/video.mp4",
+                       "meta": {"duration_ms": 10000}}
+
+            def fake_ffmpeg(_cmd, **_kwargs):
+                Path(_cmd[-1]).write_bytes(b"jpeg")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with patch.object(pipeline, "_download"), patch("core.pipeline.subprocess.run", side_effect=fake_ffmpeg), \
+                 patch.object(pipeline, "_run_stage", return_value=StageResult(
+                     "build_mask", 0, 1.0, "BBOX_RESULT: 10 20 100 50")) as run_stage:
+                frames, bbox, _ = pipeline.prepare(payload, lambda _stage, _progress: None)
+
+            self.assertEqual(len(frames), 3)
+            self.assertTrue(all(frame.exists() for frame in frames))
+            self.assertEqual(bbox, [10, 20, 100, 50])
+            self.assertEqual(run_stage.call_count, 1)
+            self.assertEqual(run_stage.call_args.args[0]["name"], "build_mask")
 
 
 class ProgressParseTest(SimpleTestCase):

@@ -71,8 +71,8 @@ Python短视频去水印, 视频目前支持25个平台, 图集目前支持5个�
 # 进入项目根目录
 cd parse-video-py
 
-# 创建虚拟环境并安装全部依赖
-uv venv && uv pip install -e ".[all]"
+# 在根目录创建统一环境，安装解析服务、cloud_web 和 gpu_worker
+uv sync --locked --extra services --extra web --extra cli --extra wm
 
 # 激活虚拟环境
 source .venv/bin/activate
@@ -80,8 +80,7 @@ source .venv/bin/activate
 
 ### CLI 命令行
 ```shell
-# 安装
-uv pip install -e ".[all]"
+# 依赖已由根目录的 uv sync 安装
 
 # 解析视频
 parse-video-py parse "https://v.douyin.com/xxx"

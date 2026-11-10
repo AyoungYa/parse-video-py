@@ -71,17 +71,42 @@ class LeaseFlowTest(TestCase):
         self.assertEqual(task.status, TaskStatus.LEASED)
         self.assertEqual(task.attempt, 1)
 
+        self.assertEqual(r.data["phase"], "prepare")
         r = self.client.post(
             "/api/v1/worker/heartbeat",
-            {"task_id": str(task.id), "stage": "lama_apply", "progress": 0.42},
+            {"task_id": str(task.id), "stage": "extracting_frames", "progress": 0.12},
             format="json",
             **self.auth,
         )
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.data["ok"])
         task.refresh_from_db()
-        self.assertEqual(task.status, TaskStatus.RUNNING)
-        self.assertAlmostEqual(task.progress, 0.42, places=2)
+        self.assertEqual(task.status, TaskStatus.EXTRACTING_FRAMES)
+        with patch("apps.tasks.views_worker.oss.object_exists", return_value=True):
+            r = self.client.post("/api/v1/worker/prepared", {
+                "task_id": str(task.id), "bbox": [100, 50, 300, 120],
+            }, format="json", **self.auth)
+        self.assertEqual(r.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.AWAITING_CONFIRMATION)
+        premature = self.client.post("/api/v1/worker/complete", {
+            "task_id": str(task.id), "result_key": "results/too-early.mp4",
+        }, format="json", **self.auth)
+        self.assertEqual(premature.status_code, 409)
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(f"/api/v1/tasks/{task.id}/bbox", {
+            "bbox": [100, 50, 300, 120],
+        }, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.client.force_authenticate(user=None)
+        r = self.client.post("/api/v1/worker/claim", {}, format="json", **self.auth)
+        self.assertEqual(r.data["phase"], "render")
+        self.client.post("/api/v1/worker/heartbeat", {
+            "task_id": str(task.id), "stage": "removing_watermark", "progress": 0.42,
+        }, format="json", **self.auth)
+        self.client.post("/api/v1/worker/heartbeat", {
+            "task_id": str(task.id), "stage": "verifying", "progress": 0.95,
+        }, format="json", **self.auth)
 
         body = {
             "task_id": str(task.id),

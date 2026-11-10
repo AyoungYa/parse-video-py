@@ -7,6 +7,16 @@ confidence: high
 
 # 核心业务流程
 
+## 流程：cloud_web 视频去水印任务
+
+上传确认后进入 `pending`。worker 首次领取进入 `leased`，先下载原片、提取关键帧（`extracting_frames`），再通过抽样帧定位水印（`locating_watermark`）。worker 把关键帧上传到任务专属 OSS 对象，并通过 `POST /api/v1/worker/prepared` 提交建议框；云端释放租约，转为 `awaiting_confirmation`。前端在关键帧上以红框显示建议区域，用户可直接确认或重新框选。
+
+用户通过 `POST /api/v1/tasks/<id>/bbox` 确认后，写入 `bbox` 和 `bbox_confirmed`，不重复扣费，任务回到 `pending`。worker 第二次领取时 `phase=render`，按该区域生成 mask 并去水印（`removing_watermark`），随后进入 `verifying`。只有已确认水印区域且进入验收阶段的任务可上报完成，转 `succeeded`。
+
+定位置信度不足时仍进入待确认阶段，允许用户从候选框选择或手动画框。准备或渲染阶段租约超时、可重试错误回到 `pending`；重试耗尽转 `failed`。`awaiting_confirmation` 可取消并退款。所有状态变化写 `TaskEvent`。关键帧对象与原片、成片一并按保留期清理。
+
+相关代码：`cloud_web/apps/tasks/services/lease.py`、`cloud_web/apps/tasks/views_worker.py`、`cloud_web/apps/tasks/views_user.py`、`gpu_worker/core/pipeline.py`、`gpu_worker/core/runner.py`。
+
 ## 流程：分享链接解析
 
 ### 是否已确认
