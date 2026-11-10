@@ -112,6 +112,21 @@ MPS ~1.2s/帧；720P 小 ROI（330×130）MPS 0.2s/帧，1648 帧 5.5 分钟跑�
 **其他**：本机 ffmpeg 不认 `-vsync`，降采样用 `-vf fps=N`。脱离会话启动器模板
 `demo/wm_demo1/runbg.py <tag> -- <cmd...>`（日志+PID 落盘）。
 
+### ProPainter 评测（2026-11-10，实验目录 `demo/wm_propainter/`）
+
+- **结论：时序赢、纹理输、速度惨、许可证禁商用 → 仍不进产品**。
+- flicker 对比（5 片 × 60 帧，同 clip 同 mask 同 verify）：aerial **2.43→0.34**、
+  white-particles 1.46→0.61、centennial 0.71→0.20、blue-jeans 1.19→0.92、running_car 0.98≈1.02。
+  med7 时域中值（1.34）只是缓解，时序模型才根治。
+- 代价：aerial/centennial 目视雾状涂抹（needs_texture，cmp_*.png 三联图可查）；
+  整帧 resize 往返违反「只动 ROI」原则。
+- 工程：CPU 11 分钟/60 帧（LaMa MPS 0.2s/帧，慢 33 倍）；**MPS 在 Transformer 阶段卡死**
+  （24 帧小样例能跑完，60 帧第一轮后死锁无报错——别再试 MPS）。
+- 环境：GitHub 直连被杀走 ghfast.top；conda 禁 pip 装包 → 依赖 `pip --target pylibs`
+  + PYTHONPATH（推理只需 einops/tqdm/imageio/matplotlib，addict/timm/skimage 不需要）。
+- 未来路线：DiffuEraser 等可商用扩散视频修复成熟后，按 `run_compare.zsh` SOP 复测。
+- 坑：runner `--frames N` 截短会让 verify 多数指标变 None（帧数不齐），对比必须全 clip。
+
 ## 去水印调参台 wm-studio
 
 先调参再做全片。代码 `src/parse_video_py/wm_studio/`，见其 README。
