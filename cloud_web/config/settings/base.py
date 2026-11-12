@@ -186,7 +186,7 @@ WECHAT_PAY_MONTHLY_PRICE_FEN = int(os.getenv("WECHAT_PAY_MONTHLY_PRICE_FEN", "49
 MEMBERSHIP_PURCHASE_ENABLED = os.getenv("MEMBERSHIP_PURCHASE_ENABLED", "0") == "1"
 
 # ---- 短信验证码登录（provider=console 时不真发，仅打日志）----
-SMS_PROVIDER = os.getenv("SMS_PROVIDER", "console")  # console | aliyun
+SMS_PROVIDER = os.getenv("SMS_PROVIDER", "console")  # console | dypnsapi
 SMS_DEV_ECHO = os.getenv("SMS_DEV_ECHO", "0") == "1"  # 仅开发：把验证码回显给前端
 SMS_CODE_TTL_SECONDS = int(os.getenv("SMS_CODE_TTL_SECONDS", "300"))
 SMS_RESEND_INTERVAL_SECONDS = int(os.getenv("SMS_RESEND_INTERVAL_SECONDS", "60"))

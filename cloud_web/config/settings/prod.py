@@ -30,7 +30,7 @@ if SMS_PROVIDER == "console":  # noqa: F405
 
     warnings.warn(
         "SMS_PROVIDER=console：生产环境不会真实发送短信，用户将无法登录。"
-        "请配置阿里云短信（SMS_PROVIDER=aliyun）。",
+        "请配置阿里云短信认证（SMS_PROVIDER=dypnsapi）。",
         RuntimeWarning,
         stacklevel=1,
     )

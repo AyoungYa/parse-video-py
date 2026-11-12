@@ -27,6 +27,6 @@ if _missing:
     )
 
 # 本地默认不真发短信，把验证码直接回显给前端，方便联调。
-# 生产（prod.py）不会走到这里；如需本地演练真发，设 SMS_PROVIDER=aliyun 并关掉 SMS_DEV_ECHO。
+# 生产（prod.py）不会走到这里；如需本地演练真发，设 SMS_PROVIDER=dypnsapi 并关掉 SMS_DEV_ECHO。
 if os.getenv("SMS_PROVIDER", "console") == "console":
     SMS_DEV_ECHO = os.getenv("SMS_DEV_ECHO", "1") == "1"  # noqa: F405

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -13,6 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import SmsCode, User
+from apps.accounts import sms
 
 PHONE = "13800138000"
 
@@ -186,3 +189,70 @@ class SmsLoginTests(TestCase):
             )
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("dev_code", r.data)
+
+
+@override_settings(
+    SMS_PROVIDER="dypnsapi", SMS_DEV_ECHO=True, CAPTCHA_DEV_ECHO=True,
+    SMS_ALIYUN_ACCESS_KEY_ID="test-ak", SMS_ALIYUN_ACCESS_KEY_SECRET="test-sk",
+    SMS_ALIYUN_SIGN_NAME="test-sign", SMS_ALIYUN_TEMPLATE_CODE="test-template",
+)
+class DypnsapiSmsTests(TestCase):
+    """云端验证码不会回显；只有阿里云核验 PASS 才能登录。"""
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _send(self):
+        cap = self.client.get("/api/v1/auth/captcha").data
+        response = self.client.post("/api/v1/auth/sms/send", {
+            "phone": PHONE, "captcha_id": cap["captcha_id"],
+            "captcha_code": cap["dev_code"],
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def _login(self, code):
+        return self.client.post(
+            "/api/v1/auth/sms/login", {"phone": PHONE, "code": code}, format="json"
+        )
+
+    def test_dypnsapi_login_requires_pass(self):
+        with patch.object(sms, "_send_dypnsapi"):
+            response = self._send()
+        self.assertNotIn("dev_code", response)
+        record = SmsCode.objects.get(phone=PHONE)
+        self.assertEqual(record.purpose, "login_dypnsapi")
+        self.assertEqual(record.code_hash, "")
+
+        with patch.object(sms, "_check_dypnsapi", return_value=False):
+            wrong = self._login("123456")
+        self.assertEqual(wrong.status_code, 400)
+        self.assertEqual(wrong.data["code"], "sms_code_wrong")
+        self.assertEqual(User.objects.count(), 0)
+
+        with patch.object(sms, "_check_dypnsapi", return_value=True):
+            good = self._login("123456")
+        self.assertEqual(good.status_code, 201)
+        self.assertEqual(self._login("123456").data["code"], "sms_code_not_found")
+
+    def test_check_api_requires_verify_result_pass(self):
+        body = SimpleNamespace(code="OK", success=True, model=SimpleNamespace(verify_result="UNKNOWN"))
+        client = SimpleNamespace(check_sms_verify_code=lambda request: SimpleNamespace(body=body))
+        with patch.object(sms, "_dypnsapi_client", return_value=client):
+            self.assertFalse(sms._check_dypnsapi(PHONE, "123456"))
+            body.model.verify_result = "PASS"
+            self.assertTrue(sms._check_dypnsapi(PHONE, "123456"))
+            body.code = "ERROR"
+            with self.assertRaises(sms.SmsError):
+                sms._check_dypnsapi(PHONE, "123456")
+
+    def test_send_api_uses_cloud_generated_code(self):
+        body = SimpleNamespace(code="OK", success=True)
+        seen = []
+        client = SimpleNamespace(send_sms_verify_code=lambda request: (seen.append(request), SimpleNamespace(body=body))[1])
+        with patch.object(sms, "_dypnsapi_client", return_value=client):
+            sms._send_dypnsapi(PHONE, 300, 60)
+        self.assertEqual(seen[0].template_param, '{"code":"##code##","min":"5"}')
+        self.assertEqual(seen[0].code_length, 6)
+        self.assertFalse(seen[0].return_verify_code)

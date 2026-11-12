@@ -256,6 +256,11 @@ worker 进程启动后独立于任务每 10 秒调用 `POST /api/v1/worker/alive
 
 ## 流程：Basic Auth 鉴权
 
+cloud_web 手机号登录：图形验证码通过后检查短信频率，`dypnsapi` 调用
+`SendSmsVerifyCode` 由阿里云生成 6 位数字验证码；登录时要求本地存在未过期、
+未核销的发送记录，再调用 `CheckSmsVerifyCode`，且仅 `Model.VerifyResult=PASS`
+时创建登录令牌。console 模式只用于本地开发。
+
 ### 是否已确认
 
 - 状态：已确认

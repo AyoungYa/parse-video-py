@@ -1,10 +1,9 @@
-"""短信验证码服务：生成、限流、核销、发送。
+"""短信验证码服务：限流、发送、核销。
 
 provider（settings.SMS_PROVIDER）：
 - ``console``（默认）：不真发，只打日志。配合 ``SMS_DEV_ECHO=1`` 把验证码回显在
   响应里，本地联调和内测用——上线前必须关掉。
-- ``aliyun``：阿里云短信（需已备案签名 + 模板）。SDK 按需 import，
-  未安装/未配置时抛 SmsError，绝不静默降级。
+- ``dypnsapi``：阿里云号码认证的短信认证服务，验证码由阿里云生成并核验。
 
 安全参数全部可从环境变量覆盖，见 config/settings/base.py 的 SMS 段。
 """
@@ -70,18 +69,24 @@ def send_code(phone: str, ip: str | None = None) -> dict:
     if ip and SmsCode.objects.filter(ip=ip, created_at__gte=day_start).count() >= daily_ip_cap:
         raise SmsError("sms_daily_ip_cap", "该网络今日发送次数已达上限", status=429)
 
-    code = f"{secrets.randbelow(1000000):06d}"
+    provider = getattr(settings, "SMS_PROVIDER", "console")
+    if provider == "dypnsapi":
+        _send_dypnsapi(phone, ttl, resend_gap)
+        code = None
+    elif provider == "console":
+        code = f"{secrets.randbelow(1000000):06d}"
+        _deliver(phone, code)
+    else:
+        raise SmsError("sms_provider_unknown", "短信服务配置错误", status=500)
     SmsCode.objects.create(
         phone=phone,
-        code_hash=SmsCode.hash_code(code),
-        purpose="login",
+        code_hash=SmsCode.hash_code(code) if code else "",
+        purpose="login_dypnsapi" if provider == "dypnsapi" else "login",
         ip=ip,
         expires_at=now + timedelta(seconds=ttl),
     )
-    _deliver(phone, code)
-
     resp: dict = {"retry_after": resend_gap}
-    if getattr(settings, "SMS_DEV_ECHO", False):
+    if provider == "console" and getattr(settings, "SMS_DEV_ECHO", False):
         # 开发回显：仅 SMS_PROVIDER=console 且显式开启时
         resp["dev_code"] = code
     return resp
@@ -90,8 +95,10 @@ def send_code(phone: str, ip: str | None = None) -> dict:
 def verify_and_consume(phone: str, code: str) -> None:
     """核销验证码。错误码语义清晰，方便前端提示。"""
     max_attempts = _p("SMS_MAX_ATTEMPTS", 5)
+    provider = getattr(settings, "SMS_PROVIDER", "console")
+    purpose = "login_dypnsapi" if provider == "dypnsapi" else "login"
     record = (
-        SmsCode.objects.filter(phone=phone, purpose="login", used_at__isnull=True)
+        SmsCode.objects.filter(phone=phone, purpose=purpose, used_at__isnull=True)
         .order_by("-created_at")
         .first()
     )
@@ -101,7 +108,11 @@ def verify_and_consume(phone: str, code: str) -> None:
         raise SmsError("sms_code_expired", "验证码已过期，请重新获取", status=400)
     if record.attempts >= max_attempts:
         raise SmsError("sms_code_locked", "错误次数过多，请重新获取验证码", status=400)
-    if SmsCode.hash_code(code) != record.code_hash:
+    if provider == "dypnsapi":
+        valid = _check_dypnsapi(phone, code)
+    else:
+        valid = secrets.compare_digest(SmsCode.hash_code(code), record.code_hash)
+    if not valid:
         record.attempts += 1
         record.save(update_fields=["attempts"])
         raise SmsError("sms_code_wrong", "验证码错误", status=400)
@@ -126,7 +137,70 @@ def login_or_register(phone: str) -> tuple[User, bool]:
     return user, created
 
 
-# ---- 发送通道 ----
+# ---- 阿里云号码认证短信服务 ----
+
+def _dypnsapi_client():
+    ak = getattr(settings, "SMS_ALIYUN_ACCESS_KEY_ID", "")
+    sk = getattr(settings, "SMS_ALIYUN_ACCESS_KEY_SECRET", "")
+    if not ak or not sk:
+        raise SmsError("sms_provider_unconfigured", "短信服务未配置", status=500)
+    try:
+        from alibabacloud_dypnsapi20170525.client import Client
+        from alibabacloud_tea_openapi.models import Config
+    except ImportError as e:
+        raise SmsError("sms_provider_unavailable", "短信服务不可用", status=500) from e
+    return Client(Config(
+        access_key_id=ak, access_key_secret=sk,
+        endpoint="dypnsapi.aliyuncs.com", connect_timeout=3000, read_timeout=5000,
+    ))
+
+
+def _send_dypnsapi(phone: str, ttl: int, interval: int) -> None:
+    sign = getattr(settings, "SMS_ALIYUN_SIGN_NAME", "")
+    template = getattr(settings, "SMS_ALIYUN_TEMPLATE_CODE", "")
+    if not sign or not template:
+        raise SmsError("sms_provider_unconfigured", "短信服务未配置签名或模板", status=500)
+    try:
+        from alibabacloud_dypnsapi20170525.models import SendSmsVerifyCodeRequest
+    except ImportError as e:
+        raise SmsError("sms_provider_unavailable", "短信服务不可用", status=500) from e
+    request = SendSmsVerifyCodeRequest(
+        phone_number=phone, sign_name=sign, template_code=template,
+        template_param=f'{{"code":"##code##","min":"{max(1, ttl // 60)}"}}',
+        code_length=6, code_type=1, valid_time=ttl, interval=interval,
+        duplicate_policy=1, return_verify_code=False,
+    )
+    client = _dypnsapi_client()
+    try:
+        body = client.send_sms_verify_code(request).body
+    except Exception as e:
+        logger.exception("[SMS:dypnsapi] 发送请求失败")
+        raise SmsError("sms_send_failed", "短信服务暂时不可用，请稍后重试", status=502) from e
+    if getattr(body, "code", None) != "OK" or getattr(body, "success", False) is not True:
+        logger.error("[SMS:dypnsapi] 发送失败 code=%s request_id=%s", getattr(body, "code", ""), getattr(body, "request_id", ""))
+        raise SmsError("sms_send_failed", "短信发送失败，请稍后重试", status=502)
+
+
+def _check_dypnsapi(phone: str, code: str) -> bool:
+    try:
+        from alibabacloud_dypnsapi20170525.models import CheckSmsVerifyCodeRequest
+    except ImportError as e:
+        raise SmsError("sms_provider_unavailable", "短信服务不可用", status=500) from e
+    client = _dypnsapi_client()
+    try:
+        body = client.check_sms_verify_code(
+            CheckSmsVerifyCodeRequest(phone_number=phone, verify_code=code)
+        ).body
+    except Exception as e:
+        logger.exception("[SMS:dypnsapi] 核验请求失败")
+        raise SmsError("sms_verify_unavailable", "验证码暂时无法核验，请稍后重试", status=502) from e
+    if getattr(body, "code", None) != "OK" or getattr(body, "success", False) is not True:
+        logger.error("[SMS:dypnsapi] 核验接口失败 code=%s request_id=%s", getattr(body, "code", ""), getattr(body, "request_id", ""))
+        raise SmsError("sms_verify_unavailable", "验证码暂时无法核验，请稍后重试", status=502)
+    return getattr(getattr(body, "model", None), "verify_result", None) == "PASS"
+
+
+# ---- 旧发送通道（保留函数供兼容调用） ----
 
 def _deliver(phone: str, code: str) -> None:
     provider = getattr(settings, "SMS_PROVIDER", "console")

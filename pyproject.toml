@@ -36,6 +36,7 @@ services = [
     "oss2>=2.18",
     "gunicorn>=22.0",
     "alibabacloud-dysmsapi20170525>=2.1.0",
+    "alibabacloud-dypnsapi20170525>=2.0.0",
     "alibabacloud-tea-openapi>=0.3.9",
     "python-dotenv>=1.0",
     "requests>=2.31",

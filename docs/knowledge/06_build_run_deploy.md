@@ -8,6 +8,11 @@ source_commit: dd55df3
 
 ## cloud_web 微信支付配置
 
+cloud_web 生产短信：在 `.env` 配 `SMS_PROVIDER=dypnsapi`，并填写
+`SMS_ALIYUN_ACCESS_KEY_ID/SECRET` 与号码认证控制台中配套的赠送
+`SMS_ALIYUN_SIGN_NAME/TEMPLATE_CODE`。安装 `alibabacloud-dypnsapi20170525`；
+生产环境保持 `SMS_DEV_ECHO=0`。
+
 扫码购买包月会员需在 `cloud_web/.env` 填写 `WECHAT_PAY_APP_ID`、
 `WECHAT_PAY_MCH_ID`、`WECHAT_PAY_MCH_SERIAL_NO`、`WECHAT_PAY_PRIVATE_KEY_PATH`、
 `WECHAT_PAY_PUBLIC_KEY_ID`、`WECHAT_PAY_PUBLIC_KEY_PATH`、`WECHAT_PAY_API_V3_KEY`、

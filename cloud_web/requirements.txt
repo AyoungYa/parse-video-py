@@ -16,6 +16,12 @@ alibabacloud-credentials-api==1.0.1
     # via alibabacloud-credentials
 alibabacloud-dysmsapi20170525==4.6.0
     # via cloud-web
+alibabacloud-dypnsapi20170525==2.0.0
+    # via cloud-web
+alibabacloud-endpoint-util==0.0.4
+    # via alibabacloud-dypnsapi20170525
+alibabacloud-openapi-util==0.2.4
+    # via alibabacloud-dypnsapi20170525
 alibabacloud-gateway-spi==0.0.4
     # via alibabacloud-tea-openapi
 alibabacloud-tea==0.4.3

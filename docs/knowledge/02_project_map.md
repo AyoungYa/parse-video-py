@@ -9,6 +9,10 @@ confidence: high
 
 ## cloud_web 会员支付补充
 
+cloud_web 手机号登录使用 `apps/accounts/sms.py`。开发环境为 console 验证码；
+生产使用阿里云号码认证短信服务 `SendSmsVerifyCode` 和 `CheckSmsVerifyCode`，
+仅核验结果 PASS 时允许登录。发送记录仍在 `SmsCode` 中用于频控及一次性核销。
+
 免费积分批次由 `cloud_web/apps/billing/models.py` 的 `PointLot`、`PointSpend` 记录，过期、扣减和退款由 `cloud_web/apps/billing/services.py` 处理。
 
 `cloud_web/apps/billing/wechat_pay.py` 接入微信支付 API v3 Native 扫码支付。

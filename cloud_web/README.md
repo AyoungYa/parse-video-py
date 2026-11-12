@@ -162,7 +162,7 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 | `MAX_ATTEMPT=3` | 重试上限，防止一个坏任务反复烧算力 |
 | `MONTHLY_MINUTES_LIMIT=100` | 公平使用上限。**300 会亏钱**（见成本模型） |
 | `WORKER_CLAIM_TIMEOUT=25` | 长轮询秒数。gunicorn worker 数要 > 算力机数 × 2 |
-| `SMS_PROVIDER` | `console` 只打日志不真发（本地默认）；生产必须 `aliyun` |
+| `SMS_PROVIDER` | `console` 只打日志不真发（本地默认）；生产使用 `dypnsapi` |
 | `SMS_DEV_ECHO` | **生产必须 0**。1 会把验证码回显给前端，等于谁都能登录 |
 
 ## 自检脚本
@@ -178,7 +178,7 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 
 `check_oss.py` 与 `e2e_oss.py` 都会在 `uploads/__probe__*/` 下写临时对象并在结束时删除；
 `e2e_oss.py` 的数据库侧走外层事务回滚，调试库不留脏数据。
-| `SMS_ALIYUN_SIGN_NAME/TEMPLATE_CODE` | 短信签名需已备案、模板需审核通过，否则发送接口返回 `isv.SMS_SIGNATURE_ILLEGAL` |
+| `SMS_ALIYUN_SIGN_NAME/TEMPLATE_CODE` | 填号码认证控制台中配套的赠送签名和赠送模板 |
 
 ### 短信登录怎么联调
 
@@ -186,8 +186,9 @@ docker compose exec web python manage.py create_worker --name pc-01 --gpu "RTX 4
 点「获取验证码」后，验证码会以 `dev_code` 回显在登录页（后端日志里也有一份），
 点「填入」即可继续。**这条只存在于 dev，prod 配置里强制关闭。**
 
-上线前要准备：阿里云短信签名（用备案域名/APP 名申请）+ 验证码模板（变量名 `code`），
-审核通过后填进 `.env`，把 `SMS_PROVIDER` 改成 `aliyun`。
+上线前在阿里云号码认证控制台选择配套的赠送签名和赠送模板，
+填进 `.env`，把 `SMS_PROVIDER` 改成 `dypnsapi`。发送使用 `SendSmsVerifyCode`，
+验证码由阿里云生成；登录使用 `CheckSmsVerifyCode`，仅 `Model.VerifyResult=PASS` 时通过。
 
 ## 跑测试
 
