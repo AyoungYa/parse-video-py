@@ -7,6 +7,14 @@ confidence: high
 
 # 项目地图
 
+## cloud_web 会员支付补充
+
+免费积分批次由 `cloud_web/apps/billing/models.py` 的 `PointLot`、`PointSpend` 记录，过期、扣减和退款由 `cloud_web/apps/billing/services.py` 处理。
+
+`cloud_web/apps/billing/wechat_pay.py` 接入微信支付 API v3 Native 扫码支付。
+`PaymentOrder` 记录待支付、已支付、已关闭状态，支付成功后生成 `Subscription`。
+商户配置在 `cloud_web/.env.example` 的 `WECHAT_PAY_*` 项，密钥仅以部署机文件路径引用。
+
 ## 技术栈
 
 | 类型 | 技术/框架 | 版本 | 证据来源 |

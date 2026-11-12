@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { api } from "@/api/client";
+import QRCode from "qrcode";
+import { api, type MembershipOrder } from "@/api/client";
 import { useUserStore } from "@/stores/user";
 
 interface Entry {
@@ -16,7 +17,6 @@ interface CheckIn {
   signed_today: boolean;
   streak: number;
   month_earned: number;
-  month_cap: number;
 }
 
 interface Subscription {
@@ -30,6 +30,7 @@ interface PointsData {
   balance: number;
   check_in: CheckIn;
   subscription: Subscription | null;
+  membership_plan: { plan: string; price_fen: number; minutes_limit: number } | null;
   entries: Entry[];
 }
 
@@ -37,6 +38,57 @@ const user = useUserStore();
 const data = ref<PointsData | null>(null);
 const signing = ref(false);
 const loadFailed = ref(false);
+const purchasing = ref(false);
+const purchaseOpen = ref(false);
+const order = ref<MembershipOrder | null>(null);
+const qrImage = ref("");
+const qrExpired = ref(false);
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = undefined;
+}
+
+async function checkOrder() {
+  if (!order.value || !purchaseOpen.value) return;
+  try {
+    const { data: current } = await api.membershipOrder(order.value.order_no);
+    order.value = current;
+    if (current.status === "paid") {
+      stopPolling();
+      purchaseOpen.value = false;
+      ElMessage.success("支付成功，会员已开通");
+      await load();
+      await user.refresh().catch(() => undefined);
+    } else if (current.status === "closed" || Date.now() > new Date(current.expires_at).getTime() + 60_000) {
+      qrExpired.value = true;
+      stopPolling();
+    }
+  } catch {
+    // 网络抖动时保留二维码，下一次轮询继续确认。
+  }
+}
+
+async function purchase() {
+  if (purchasing.value) return;
+  purchasing.value = true;
+  try {
+    const { data: newOrder } = await api.createMembershipOrder();
+    order.value = newOrder;
+    qrExpired.value = false;
+    qrImage.value = await QRCode.toDataURL(newOrder.code_url, { width: 240, margin: 2 });
+    purchaseOpen.value = true;
+    stopPolling();
+    pollTimer = setInterval(checkOrder, 5000);
+    await checkOrder();
+  } finally {
+    purchasing.value = false;
+  }
+}
+
+watch(purchaseOpen, (open) => { if (!open) stopPolling(); });
+onUnmounted(stopPolling);
 
 const REASON: Record<string, string> = {
   initial: "新人赠送",
@@ -45,10 +97,12 @@ const REASON: Record<string, string> = {
   consume: "任务消耗",
   refund: "失败退还",
   subscribe: "订阅赠送",
+  share: "分享奖励",
+  expire: "赠送积分过期",
 };
 
 const checkIn = computed<CheckIn>(
-  () => data.value?.check_in ?? { signed_today: false, streak: 0, month_earned: 0, month_cap: 10 }
+  () => data.value?.check_in ?? { signed_today: false, streak: 0, month_earned: 0 }
 );
 
 /** 连签进度在一周内的位置：第 7 天有额外奖励 */
@@ -61,9 +115,9 @@ const dots = computed(() => {
 const balanceHint = computed(() => {
   const b = data.value?.balance ?? 0;
   if (data.value?.subscription) return "订阅期内处理不扣积分";
-  if (b === 0) return "积分用完了，签到或订阅后继续";
+  if (b === 0) return "积分用完了，签到后可继续使用";
   // 刻意不给「1 分 = 1 条 30 秒 / 5 分钟 = 3 分」这类明确换算，方便后续调价
-  return `当前积分约可处理 ${b} 条短视频，更长的视频会按时长多扣积分`;
+  return `单条最长 30 秒；每满 10 秒扣 1 分，每条至少扣 1 分`;
 });
 
 const subHint = computed(() => {
@@ -80,12 +134,6 @@ const usageRatio = computed(() => {
   const sub = data.value?.subscription;
   if (!sub?.minutes_limit) return 0;
   return Math.min(100, (sub.minutes_used / sub.minutes_limit) * 100);
-});
-
-const capRatio = computed(() => {
-  const c = checkIn.value;
-  if (!c.month_cap) return 0;
-  return Math.min(100, (c.month_earned / c.month_cap) * 100);
 });
 
 function formatDate(iso: string): string {
@@ -113,8 +161,6 @@ async function signIn() {
     const { data: r } = await api.signIn();
     if (r.already) {
       ElMessage.info("今天已经签过了");
-    } else if (r.capped) {
-      ElMessage.warning("本月签到积分已达上限，下月恢复");
     } else {
       ElMessage.success(`签到 +${r.points} 分，已连续 ${r.streak} 天`);
     }
@@ -157,7 +203,7 @@ onMounted(load);
             连续签到 <span class="num">{{ checkIn.streak }}</span> 天
           </div>
           <div class="micro muted" style="margin-top: 2px">
-            签到 +1/天，连签 7 天额外 +5，每月最多 {{ checkIn.month_cap }} 分
+            签到 +1/天，每连续 7 天额外 +5；赠送积分 10 天有效
           </div>
         </div>
         <button
@@ -177,10 +223,7 @@ onMounted(load);
         </span>
       </div>
 
-      <div class="cap">
-        <div class="bar"><i :style="{ width: `${Math.max(2, capRatio)}%` }" /></div>
-        <span class="micro muted num">本月签到已得 {{ checkIn.month_earned }} / {{ checkIn.month_cap }} 分</span>
-      </div>
+      <div class="cap"><span class="micro muted num">本月签到已得 {{ checkIn.month_earned }} 分</span></div>
     </div>
 
     <!-- 订阅 -->
@@ -196,6 +239,32 @@ onMounted(load);
         单条上限 30 分钟，支持 4K 与优先队列。超出月度上限后可加购分钟数。
       </p>
     </div>
+
+    <div v-if="data?.membership_plan" class="card membership-card">
+      <div>
+        <span class="eyebrow">包月会员</span>
+        <h2 class="h2" style="margin-top: 8px">{{ data.subscription ? "续费会员" : "开通会员" }}</h2>
+        <p class="micro muted" style="margin-top: 8px">每月 {{ data.membership_plan.minutes_limit }} 分钟处理额度；单条最长 30 分钟。</p>
+      </div>
+      <div class="membership-action">
+        <strong class="membership-price">¥{{ (data.membership_plan.price_fen / 100).toFixed(2) }}<small>/月</small></strong>
+        <button class="btn btn-primary" type="button" :disabled="purchasing" @click="purchase">
+          {{ purchasing ? "正在创建订单…" : "微信扫码购买" }}
+        </button>
+      </div>
+    </div>
+
+    <el-dialog v-model="purchaseOpen" title="微信扫码支付" width="min(92vw, 380px)" center>
+      <div class="pay-dialog" v-if="order">
+        <strong>¥{{ (order.amount_fen / 100).toFixed(2) }}</strong>
+        <img v-if="qrImage" :src="qrImage" alt="微信支付二维码" class="pay-qr" />
+        <p class="micro muted">打开微信扫一扫，支付后会员将自动开通</p>
+        <p class="micro muted">二维码有效至 {{ formatDate(order.expires_at) }}</p>
+        <p v-if="qrExpired" class="micro">二维码已过期，请重新发起购买。</p>
+        <button v-if="qrExpired" class="btn btn-primary" type="button" @click="purchase">重新生成二维码</button>
+        <button v-else class="btn btn-secondary" type="button" @click="checkOrder">我已支付，刷新状态</button>
+      </div>
+    </el-dialog>
 
     <!-- 流水 -->
     <section style="margin-top: var(--sp-6)">
@@ -323,4 +392,12 @@ onMounted(load);
 .delta.plus {
   color: var(--ok);
 }
+.membership-card { display: flex; justify-content: space-between; gap: 24px; margin-top: var(--sp-4); }
+.membership-action { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 12px; white-space: nowrap; }
+.membership-price { font-size: 26px; color: var(--brand); }
+.membership-price small { font-size: 14px; font-weight: normal; color: var(--ink-600); }
+.pay-dialog { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.pay-dialog strong { font-size: 26px; }
+.pay-qr { width: 240px; height: 240px; max-width: 100%; }
+@media (max-width: 480px) { .membership-card { flex-direction: column; } .membership-action { align-items: flex-start; } }
 </style>

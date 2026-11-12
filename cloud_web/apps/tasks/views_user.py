@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import base64
 import uuid
 
 from django.conf import settings
@@ -75,7 +76,7 @@ def sign_upload(request):
     sub = active_subscription(user)
 
     if sub is None and get_balance(user) <= 0:
-        return _quota_error("试用额度已用完，签到或订阅后继续使用")
+        return _quota_error("积分已用完，签到后可继续使用")
 
     if sub is not None:
         used = _month_minutes_used(user)
@@ -124,7 +125,7 @@ def confirm_upload(request, task_id):
     if duration_ms / 1000 > max_seconds:
         limit = fmt_seconds(max_seconds)
         hint = (
-            f"订阅后可处理 {fmt_seconds(MEMBER_MAX_SECONDS)}内视频"
+            "当前版本单条视频最长 30 秒"
             if not sub
             else f"单条视频请控制在 {limit} 内"
         )
@@ -166,6 +167,21 @@ def confirm_upload(request, task_id):
             lease.log_transition(task, TaskStatus.AWAITING_UPLOAD, TaskStatus.PENDING, actor=f"user:{user.id}")
     except InsufficientPoints as exc:
         return _quota_error(str(exc), code="insufficient_points")
+
+    first_frame = request.data.get("first_frame") or ""
+    if isinstance(first_frame, str) and first_frame.startswith("data:image/jpeg;base64,") and len(first_frame) <= 200_000:
+        try:
+            image = base64.b64decode(first_frame.partition(",")[2], validate=True)
+            if 0 < len(image) <= 150_000 and image.startswith(b"\xff\xd8"):
+                key = oss.put_first_frame(str(task.id), image)
+                with transaction.atomic():
+                    current = Task.objects.select_for_update().get(pk=task.pk)
+                    checkpoints = dict(current.checkpoints or {})
+                    checkpoints["first_frame"] = {"key": key}
+                    current.checkpoints = checkpoints
+                    current.save(update_fields=["checkpoints"])
+        except Exception as exc:  # 缩略图失败不影响已确认的视频任务
+            logger.warning("首帧缩略图保存失败 task=%s: %s", task.id, exc)
 
     return Response({"ok": True, "task_id": str(task.id), "task_no": task.task_no,
                     "status": task.status, "points_cost": cost})
@@ -259,7 +275,18 @@ def _parse_bbox(raw) -> tuple[int, int, int, int] | None:
 @permission_classes([IsAuthenticated])
 def list_tasks(request):
     qs = Task.objects.filter(user=request.user).exclude(status=TaskStatus.AWAITING_UPLOAD)
-    return Response(TaskListSerializer(qs[:50], many=True).data)
+    tasks = list(qs[:50])
+    data = TaskListSerializer(tasks, many=True).data
+    for task, row in zip(tasks, data):
+        checkpoints = task.checkpoints or {}
+        entry = checkpoints.get("first_frame") or (checkpoints.get("keyframes") or {}).get("0")
+        key = entry.get("key") if isinstance(entry, dict) else entry
+        row["thumbnail_url"] = oss.presign_get(key, expire_seconds=600) if key else ""
+        row["preview_url"] = (
+            oss.presign_get(task.original_key, expire_seconds=600)
+            if not key and task.original_key else ""
+        )
+    return Response(data)
 
 
 @api_view(["GET"])

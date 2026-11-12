@@ -34,6 +34,15 @@ export interface Quota {
   minutes_limit: number;
 }
 
+export interface MembershipOrder {
+  order_no: string;
+  status: "pending" | "paid" | "closed";
+  plan: "monthly";
+  amount_fen: number;
+  expires_at: string;
+  code_url: string;
+}
+
 /** 水印区域，原片像素坐标 [x, y, w, h]。 */
 export type BBox = [number, number, number, number];
 
@@ -116,6 +125,8 @@ export type TaskStatus =
 export interface TaskListItem {
   id: string;
   status: TaskStatus;
+  thumbnail_url: string;
+  preview_url?: string;
   bbox_confirmed: boolean;
   progress: number;
   duration_seconds: number;
@@ -177,7 +188,7 @@ export const api = {
 
   confirmUpload: (
     taskId: string,
-    meta: { duration_ms: number; width: number; height: number; fps: number }
+    meta: { duration_ms: number; width: number; height: number; fps: number; first_frame?: string }
   ) => http.post(`/tasks/${taskId}/confirm`, meta),
 
   taskDetail: (taskId: string) => http.get<TaskDetail>(`/tasks/${taskId}`),
@@ -195,6 +206,8 @@ export const api = {
     "/billing/sign-in"
   ),
   points: () => http.get("/billing/points"),
+  createMembershipOrder: () => http.post<MembershipOrder>("/billing/membership/orders"),
+  membershipOrder: (orderNo: string) => http.get<MembershipOrder>(`/billing/membership/orders/${orderNo}`),
 };
 
 /** 浏览器直传 OSS。fetch 拿不到上传进度，所以用 XHR。 */

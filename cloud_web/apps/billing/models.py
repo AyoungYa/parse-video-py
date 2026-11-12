@@ -19,6 +19,9 @@ from apps.bizno import (
     gen_ledger_no,
     gen_sign_in_no,
     gen_subscription_no,
+    gen_payment_order_no,
+    gen_point_lot_no,
+    gen_point_spend_no,
 )
 
 
@@ -29,6 +32,8 @@ class PointReason(models.TextChoices):
     CONSUME = "consume", "任务消耗"
     REFUND = "refund", "失败退还"
     SUBSCRIBE = "subscribe", "订阅赠送"
+    SHARE = "share", "分享奖励"
+    EXPIRE = "expire", "积分过期"
 
 
 class PointLedger(models.Model):
@@ -51,7 +56,7 @@ class PointLedger(models.Model):
     )
     reason = models.CharField(
         max_length=20, choices=PointReason.choices,
-        db_comment="变动原因：initial/sign_in/streak/consume/refund/subscribe",
+        db_comment="变动原因：initial/sign_in/streak/share/consume/refund/subscribe/expire",
     )
     ref_id = models.CharField(
         "关联对象 ID（任务/订单）", max_length=64, blank=True, default="",
@@ -84,6 +89,47 @@ class PointLedger(models.Model):
         return f"{self.user_id} {self.delta:+d} → {self.balance_after}"
 
 
+class PointLot(models.Model):
+    """可用积分批次；旧余额作为永久批次迁入，新赠送按来源设置有效期。"""
+
+    lot_no = models.CharField(max_length=NO_MAX_LENGTH, default=gen_point_lot_no, editable=False,
+                              db_comment="对外积分批次号 G+日期+随机")
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, db_constraint=False,
+                             db_index=False, db_comment="所属用户 ID（逻辑外键）")
+    source = models.CharField(max_length=20, choices=PointReason.choices,
+                              db_comment="来源：initial/sign_in/streak/share/legacy/refund")
+    remaining = models.PositiveIntegerField(db_comment="本批次尚可使用的积分")
+    expires_at = models.DateTimeField(null=True, blank=True, db_comment="到期时间，NULL 表示不过期")
+    created_at = models.DateTimeField(auto_now_add=True, db_comment="发放时间")
+
+    class Meta:
+        db_table = "point_lot"
+        db_table_comment = "积分批次：按到期时间先后消费，赠送积分到期回收"
+        indexes = [models.Index(fields=["user", "expires_at"], name="idx_point_lot_user_expiry")]
+        constraints = [models.UniqueConstraint(fields=["lot_no"], name="uniq_point_lot_no")]
+
+
+class PointSpend(models.Model):
+    """记录任务从哪个批次扣分，失败时按原有效期退回。"""
+
+    spend_no = models.CharField(max_length=NO_MAX_LENGTH, default=gen_point_spend_no, editable=False,
+                                db_comment="对外积分扣减号 D+日期+随机")
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, db_constraint=False,
+                             db_index=False, db_comment="所属用户 ID（逻辑外键）")
+    task_id = models.CharField(max_length=64, db_comment="关联任务内部 ID")
+    lot = models.ForeignKey(PointLot, on_delete=models.CASCADE, db_constraint=False,
+                            db_comment="被扣减的积分批次 ID（逻辑外键）")
+    amount = models.PositiveIntegerField(db_comment="从该批次扣减的积分")
+    refunded = models.BooleanField(default=False, db_comment="该笔扣分是否已退回")
+    created_at = models.DateTimeField(auto_now_add=True, db_comment="扣分时间")
+
+    class Meta:
+        db_table = "point_spend"
+        db_table_comment = "任务积分批次消费记录，支持失败后按原批次退还"
+        indexes = [models.Index(fields=["user", "task_id"], name="idx_point_spend_user_task")]
+        constraints = [models.UniqueConstraint(fields=["spend_no"], name="uniq_point_spend_no")]
+
+
 class SignInRecord(models.Model):
     sign_in_no = models.CharField(
         "签到号", max_length=NO_MAX_LENGTH, default=gen_sign_in_no, editable=False,
@@ -113,7 +159,7 @@ class SignInRecord(models.Model):
 
     class Meta:
         db_table = "sign_in_record"
-        db_table_comment = "签到记录：每用户每天至多一条，月度积分封顶 10 分"
+        db_table_comment = "签到记录：每用户每天至多一条，连续 7 天额外奖励"
         verbose_name = "签到记录"
         verbose_name_plural = "签到记录"
         constraints = [
@@ -189,4 +235,49 @@ class Subscription(models.Model):
     def is_active(self) -> bool:
         from django.utils import timezone
 
-        return self.status == self.Status.ACTIVE and self.expires_at > timezone.now()
+        now = timezone.now()
+        return self.status == self.Status.ACTIVE and self.started_at <= now < self.expires_at
+
+
+class PaymentOrder(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "待支付"
+        PAID = "paid", "已支付"
+        CLOSED = "closed", "已关闭"
+
+    order_no = models.CharField(
+        "商户订单号", max_length=32, unique=True,
+        default=gen_payment_order_no,
+        db_comment="微信支付商户订单号，唯一且不超过 32 字符",
+    )
+    user = models.ForeignKey(
+        "accounts.User", on_delete=models.CASCADE, related_name="payment_orders",
+        db_constraint=False, db_index=False,
+        db_comment="购买用户 ID（逻辑外键）",
+    )
+    subscription = models.ForeignKey(
+        Subscription, null=True, blank=True, on_delete=models.SET_NULL,
+        db_constraint=False, db_index=False,
+        db_comment="支付成功后开通的会员订阅 ID（逻辑外键）",
+    )
+    plan = models.CharField(max_length=20, choices=Plan.choices, default=Plan.MONTHLY,
+                            db_comment="购买套餐，目前仅 monthly")
+    amount_fen = models.PositiveIntegerField(db_comment="支付金额，单位分，由服务端定价")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING,
+                              db_comment="订单状态：pending / paid / closed")
+    code_url = models.CharField(max_length=255, blank=True, default="",
+                                db_comment="微信 Native 支付二维码链接，仅待支付期间使用")
+    transaction_id = models.CharField(max_length=64, null=True, blank=True, unique=True,
+                                      db_comment="微信支付交易号，支付成功时唯一")
+    expires_at = models.DateTimeField(db_comment="扫码支付截止时间")
+    paid_at = models.DateTimeField(null=True, blank=True, db_comment="支付成功时间")
+    last_checked_at = models.DateTimeField(null=True, blank=True, db_comment="最近向微信查询状态时间，用于限频")
+    created_at = models.DateTimeField(auto_now_add=True, db_comment="订单创建时间")
+
+    class Meta:
+        db_table = "payment_order"
+        db_table_comment = "微信扫码购买会员订单，支付回调幂等开通订阅"
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="idx_payment_user_created"),
+            models.Index(fields=["status", "expires_at"], name="idx_payment_status_expiry"),
+        ]

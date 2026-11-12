@@ -186,7 +186,7 @@ CREATE TABLE `point_ledger` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '内部自增主键，不对外暴露',
   `delta` int NOT NULL COMMENT '积分变动值，正数为入账、负数为扣减；只增不改',
   `balance_after` int NOT NULL COMMENT '本行写入后的余额快照，禁止用 UPDATE 覆盖余额',
-  `reason` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变动原因：initial/sign_in/streak/consume/refund/subscribe',
+  `reason` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变动原因：initial/sign_in/streak/share/consume/refund/subscribe/expire',
   `ref_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '关联的任务号或订单号，可空',
   `note` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '备注，可空',
   `created_at` datetime(6) NOT NULL COMMENT '入账时间',
@@ -197,6 +197,36 @@ CREATE TABLE `point_ledger` (
   KEY `idx_point_ledger_user_created` (`user_id`,`created_at` DESC),
   KEY `idx_point_ledger_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='积分流水：只增不改的账本行，每行带余额快照';
+
+-- point_lot
+CREATE TABLE `point_lot` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '内部自增主键，不对外暴露',
+  `lot_no` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '对外积分批次号 G+日期+随机',
+  `source` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '来源：initial/sign_in/streak/share/legacy/refund',
+  `remaining` int unsigned NOT NULL COMMENT '本批次尚可使用的积分',
+  `expires_at` datetime(6) DEFAULT NULL COMMENT '到期时间，NULL 表示不过期',
+  `created_at` datetime(6) NOT NULL COMMENT '发放时间',
+  `user_id` bigint NOT NULL COMMENT '所属用户 ID（逻辑外键）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_point_lot_no` (`lot_no`),
+  KEY `idx_point_lot_user_expiry` (`user_id`,`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='积分批次：按到期时间先后消费，赠送积分到期回收';
+
+-- point_spend
+CREATE TABLE `point_spend` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '内部自增主键，不对外暴露',
+  `spend_no` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '对外积分扣减号 D+日期+随机',
+  `task_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '关联任务内部 ID',
+  `amount` int unsigned NOT NULL COMMENT '从该批次扣减的积分',
+  `refunded` tinyint(1) NOT NULL COMMENT '该笔扣分是否已退回',
+  `created_at` datetime(6) NOT NULL COMMENT '扣分时间',
+  `lot_id` bigint NOT NULL COMMENT '被扣减的积分批次 ID（逻辑外键）',
+  `user_id` bigint NOT NULL COMMENT '所属用户 ID（逻辑外键）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_point_spend_no` (`spend_no`),
+  KEY `point_spend_lot_id` (`lot_id`),
+  KEY `idx_point_spend_user_task` (`user_id`,`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务积分批次消费记录，支持失败后按原批次退还';
 
 -- sign_in_record
 CREATE TABLE `sign_in_record` (
@@ -210,7 +240,7 @@ CREATE TABLE `sign_in_record` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_sign_in_record_no` (`sign_in_no`),
   UNIQUE KEY `uniq_sign_in_record_user_date` (`user_id`,`sign_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='签到记录：每用户每天至多一条，月度积分封顶 10 分';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='签到记录：每用户每天至多一条，连续 7 天额外奖励';
 
 -- subscription
 CREATE TABLE `subscription` (
@@ -229,6 +259,28 @@ CREATE TABLE `subscription` (
   KEY `idx_subscription_user_expires` (`user_id`,`expires_at` DESC),
   KEY `idx_subscription_expires_at` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订阅：包月/包年状态机与月度分钟额度';
+
+-- payment_order
+CREATE TABLE `payment_order` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '内部自增主键，不对外暴露',
+  `order_no` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '微信支付商户订单号，唯一且不超过 32 字符',
+  `plan` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '购买套餐，目前仅 monthly',
+  `amount_fen` int unsigned NOT NULL COMMENT '支付金额，单位分，由服务端定价',
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '订单状态：pending / paid / closed',
+  `code_url` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '微信 Native 支付二维码链接，仅待支付期间使用',
+  `transaction_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '微信支付交易号，支付成功时唯一',
+  `expires_at` datetime(6) NOT NULL COMMENT '扫码支付截止时间',
+  `paid_at` datetime(6) DEFAULT NULL COMMENT '支付成功时间',
+  `last_checked_at` datetime(6) DEFAULT NULL COMMENT '最近向微信查询状态时间，用于限频',
+  `created_at` datetime(6) NOT NULL COMMENT '订单创建时间',
+  `subscription_id` bigint DEFAULT NULL COMMENT '支付成功后开通的会员订阅 ID（逻辑外键）',
+  `user_id` bigint NOT NULL COMMENT '购买用户 ID（逻辑外键）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `order_no` (`order_no`),
+  UNIQUE KEY `transaction_id` (`transaction_id`),
+  KEY `idx_payment_user_created` (`user_id`,`created_at` DESC),
+  KEY `idx_payment_status_expiry` (`status`,`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信扫码购买会员订单，支付回调幂等开通订阅';
 
 -- ======== Django 权限框架  [django.contrib.auth] ========
 
@@ -310,9 +362,9 @@ CREATE TABLE `django_migrations` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Django 迁移执行记录；初始化脚本会写入基线，勿手改';
 
--- ======== Django 迁移基线（27 条）========
+-- ======== Django 迁移基线 ========
 -- 不写这段，首次 `manage.py migrate` 会尝试重建所有表并报 "table already exists"。
-INSERT INTO `django_migrations` (`id`, `app`, `name`, `applied`) VALUES (1,'contenttypes','0001_initial','2026-11-05 08:49:37.301416'),(2,'contenttypes','0002_remove_content_type_name','2026-11-05 08:49:37.340258'),(3,'auth','0001_initial','2026-11-05 08:49:37.533969'),(4,'auth','0002_alter_permission_name_max_length','2026-11-05 08:49:37.580599'),(5,'auth','0003_alter_user_email_max_length','2026-11-05 08:49:37.586684'),(6,'auth','0004_alter_user_username_opts','2026-11-05 08:49:37.592400'),(7,'auth','0005_alter_user_last_login_null','2026-11-05 08:49:37.599986'),(8,'auth','0006_require_contenttypes_0002','2026-11-05 08:49:37.600864'),(9,'auth','0007_alter_validators_add_error_messages','2026-11-05 08:49:37.604939'),(10,'auth','0008_alter_user_username_max_length','2026-11-05 08:49:37.608598'),(11,'auth','0009_alter_user_last_name_max_length','2026-11-05 08:49:37.612427'),(12,'auth','0010_alter_group_name_max_length','2026-11-05 08:49:37.623582'),(13,'auth','0011_update_proxy_permissions','2026-11-05 08:49:37.631054'),(14,'auth','0012_alter_user_first_name_max_length','2026-11-05 08:49:37.633521'),(15,'accounts','0001_initial','2026-11-05 08:49:37.840786'),(16,'accounts','0002_smscode','2026-11-05 08:49:37.868000'),(17,'admin','0001_initial','2026-11-05 08:49:37.954779'),(18,'admin','0002_logentry_remove_auto_add','2026-11-05 08:49:37.958911'),(19,'admin','0003_logentry_add_action_flag_choices','2026-11-05 08:49:37.964367'),(20,'billing','0001_initial','2026-11-05 08:49:38.090403'),(21,'sessions','0001_initial','2026-11-05 08:49:38.105817'),(22,'tasks','0001_initial','2026-11-05 08:49:38.251846'),(23,'accounts','0003_alter_authtoken_table_comment_and_more','2026-11-05 09:08:18.611815'),(24,'billing','0002_alter_pointledger_table_comment_and_more','2026-11-05 09:08:19.017065'),(25,'tasks','0002_alter_task_status','2026-11-05 09:08:19.022818'),(26,'tasks','0003_alter_task_table_comment_and_more','2026-11-05 09:08:19.738474'),(27,'accounts','0004_captcha_challenge','2026-11-09 07:44:12.660024');;
+INSERT INTO `django_migrations` (`id`, `app`, `name`, `applied`) VALUES (1,'contenttypes','0001_initial','2026-11-05 08:49:37.301416'),(2,'contenttypes','0002_remove_content_type_name','2026-11-05 08:49:37.340258'),(3,'auth','0001_initial','2026-11-05 08:49:37.533969'),(4,'auth','0002_alter_permission_name_max_length','2026-11-05 08:49:37.580599'),(5,'auth','0003_alter_user_email_max_length','2026-11-05 08:49:37.586684'),(6,'auth','0004_alter_user_username_opts','2026-11-05 08:49:37.592400'),(7,'auth','0005_alter_user_last_login_null','2026-11-05 08:49:37.599986'),(8,'auth','0006_require_contenttypes_0002','2026-11-05 08:49:37.600864'),(9,'auth','0007_alter_validators_add_error_messages','2026-11-05 08:49:37.604044'),(10,'auth','0008_alter_user_username_max_length','2026-11-05 08:49:37.608598'),(11,'auth','0009_alter_user_last_name_max_length','2026-11-05 08:49:37.614427'),(12,'auth','0010_alter_group_name_max_length','2026-11-05 08:49:37.623582'),(13,'auth','0011_update_proxy_permissions','2026-11-05 08:49:37.631054'),(14,'auth','0012_alter_user_first_name_max_length','2026-11-05 08:49:37.633521'),(15,'accounts','0001_initial','2026-11-05 08:49:37.840786'),(16,'accounts','0002_smscode','2026-11-05 08:49:37.868000'),(17,'admin','0001_initial','2026-11-05 08:49:37.954779'),(18,'admin','0002_logentry_remove_auto_add','2026-11-05 08:49:37.958911'),(19,'admin','0003_logentry_add_action_flag_choices','2026-11-05 08:49:37.964367'),(20,'billing','0001_initial','2026-11-05 08:49:38.090403'),(21,'sessions','0001_initial','2026-11-05 08:49:38.105817'),(22,'tasks','0001_initial','2026-11-05 08:49:38.251846'),(23,'accounts','0003_alter_authtoken_table_comment_and_more','2026-11-05 09:08:18.611815'),(24,'billing','0002_alter_pointledger_table_comment_and_more','2026-11-05 09:08:19.017065'),(25,'tasks','0002_alter_task_status','2026-11-05 09:08:19.022818'),(26,'tasks','0003_alter_task_table_comment_and_more','2026-11-05 09:08:19.738474'),(27,'accounts','0004_captcha_challenge','2026-11-09 07:44:12.660024'),(28,'billing','0003_paymentorder','2026-11-11 08:32:00.000000'),(29,'billing','0004_alter_pointledger_reason_pointlot_pointspend_and_more','2026-11-12 00:00:00.000000');
 
 -- ======== 自检 ========
 -- SELECT TABLE_NAME FROM information_schema.TABLES

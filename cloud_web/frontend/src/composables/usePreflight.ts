@@ -5,7 +5,7 @@
  * 现有竞品都是传完 500MB 才报「不支持」，这是最大的体验坑。
  *
  * 注意：这里的积分估算只用于展示预期，实际扣费以服务端 confirm 返回的
- * points_cost 为准（规则在 cloud_web/config/settings/base.py）。
+ * points_cost 为准（规则在 cloud_web/apps/billing/services.py）。
  */
 
 import { grabFrame, guessWatermarkCorner, probeVideo, type Quota, type VideoMeta } from "@/api/client";
@@ -37,10 +37,7 @@ const ACCEPT_EXT = ["mp4", "mov", "avi", "mkv", "webm", "m4v"];
 
 /** 与后端 points_for_duration 保持一致 */
 export function estimatePoints(durationMs: number): number {
-  const s = durationMs / 1000;
-  if (s <= 30) return 1;
-  if (s <= 300) return 3;
-  return 3 * (Math.floor(s / 300) + 1);
+  return Math.max(1, Math.floor(durationMs / 10_000));
 }
 
 function extOf(name: string): string {
@@ -119,8 +116,8 @@ export async function preflight(file: File, quota: Quota | null): Promise<Prefli
   } else if (quota && seconds > quota.max_seconds) {
     checks.push({
       label: "视频时长",
-      state: "info",
-      detail: `${seconds.toFixed(1)} 秒，超出当前档位单条 ${quota.max_seconds} 秒上限`,
+      state: "fail",
+      detail: `${seconds.toFixed(1)} 秒，当前单条最长 ${quota.max_seconds} 秒，请先裁剪`,
     });
   } else {
     checks.push({ label: "视频时长", state: "pass", detail: `${seconds.toFixed(1)} 秒` });

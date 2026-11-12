@@ -136,6 +136,24 @@ class LeaseFlowTest(TestCase):
             r = self.client.post("/api/v1/worker/claim", {}, format="json", **self.auth)
         self.assertEqual(r.status_code, 204)
 
+    def test_quality_not_green_refunds_once_after_delivery(self):
+        task = _make_pending_task(self.user, cost=2)
+        task.status = TaskStatus.VERIFYING
+        task.worker = self.worker
+        task.params = {"bbox_confirmed": True, "bbox": [100, 50, 300, 120]}
+        task.lease_expires_at = timezone.now() + timedelta(seconds=60)
+        task.save()
+        balance_before = get_balance(self.user)
+        body = {"task_id": str(task.id), "result_key": "results/not-green.mp4",
+                "metrics": {"all_green": False}}
+        for _ in range(2):
+            response = self.client.post("/api/v1/worker/complete", body, format="json", **self.auth)
+            self.assertEqual(response.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.SUCCEEDED)
+        self.assertIsNotNone(task.refunded_at)
+        self.assertEqual(get_balance(self.user), balance_before + 2)
+
     def test_invalid_worker_token_rejected(self):
         r = self.client.post(
             "/api/v1/worker/claim", {}, format="json", HTTP_X_WORKER_TOKEN="wkr_bogus"
@@ -349,18 +367,14 @@ class RetryExistingTaskTest(TestCase):
 
 
 class BillingTest(TestCase):
-    def test_sign_in_capped_monthly(self):
-        from django.test import override_settings
-
+    def test_sign_in_once_per_day(self):
         from apps.billing.services import sign_in
 
         user = _make_user_with_points("13800000002", points=0)
-        with override_settings(MONTHLY_POINT_CAP=1):
-            first = sign_in(user)
-            self.assertEqual(first["points"], 1)
-            # 同一天重复签到不再发分
-            again = sign_in(user)
-            self.assertTrue(again.get("already"))
+        first = sign_in(user)
+        self.assertEqual(first["points"], 1)
+        again = sign_in(user)
+        self.assertTrue(again.get("already"))
 
     def test_consume_never_goes_negative(self):
         from apps.billing.services import InsufficientPoints, consume_points

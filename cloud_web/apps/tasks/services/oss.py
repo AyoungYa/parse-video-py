@@ -73,6 +73,16 @@ def mask_key(task_id: str) -> str:
     return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/mask.png"
 
 
+def first_frame_key(task_id: str) -> str:
+    return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/first-frame.jpg"
+
+
+def put_first_frame(task_id: str, image: bytes) -> str:
+    key = first_frame_key(task_id)
+    _bucket().put_object(key, image, headers={"Content-Type": "image/jpeg"})
+    return key
+
+
 def keyframe_key(task_id: str, index: int = 0, run_id: str = "") -> str:
     if run_id:
         return f"{settings.OSS_UPLOAD_PREFIX}{task_id}/keyframes/{run_id}/keyframe-{index}.jpg"
@@ -204,5 +214,6 @@ def delete_task_objects(task) -> None:
     }
     frame_keys.update((checkpoints.get("keyframes") or {}).values())
     for key in (task.original_key, task.mask_key, task.result_key, task.report_key,
+                first_frame_key(str(task.id)),
                 *(keyframe_key(str(task.id), i) for i in range(3)), *frame_keys, *checkpoint_keys):
         delete_object(key)

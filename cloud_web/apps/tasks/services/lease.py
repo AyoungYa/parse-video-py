@@ -338,6 +338,8 @@ def complete_task(
             ]
         )
         _log(task, from_status, TaskStatus.SUCCEEDED, actor=worker.name, all_green=metrics.get("all_green"))
+    if not task.metrics.get("all_green", False):
+        _refund_if_needed(task, reason="质量验收未全绿，自动退款")
     return task
 
 

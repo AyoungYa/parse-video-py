@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import TaskStatusPill from "@/components/TaskStatusPill.vue";
 import type { TaskListItem } from "@/api/client";
 
 const props = defineProps<{ task: TaskListItem }>();
 const router = useRouter();
+const imageFailed = ref(false);
+watch(() => [props.task.thumbnail_url, props.task.preview_url], () => { imageFailed.value = false; });
 
 const title = computed(() => {
   const d = props.task.duration_seconds;
@@ -40,6 +42,11 @@ function open() {
 
 <template>
   <button class="chip" type="button" @click="open">
+    <div class="chip-preview">
+      <img v-if="task.thumbnail_url && !imageFailed" :src="task.thumbnail_url" :alt="`${title}的首帧画面`" loading="lazy" @error="imageFailed = true" />
+      <video v-else-if="task.preview_url && !imageFailed" :src="`${task.preview_url}#t=0.001`" muted playsinline preload="metadata" aria-label="视频首帧预览" @error="imageFailed = true" />
+      <div v-else class="preview-empty" aria-hidden="true"><span>▸</span><small>视频预览</small></div>
+    </div>
     <div class="chip-top">
       <TaskStatusPill :status="task.status" :progress="task.progress" :confirmed="task.bbox_confirmed" />
       <span class="chip-arrow" aria-hidden="true">↗</span>
@@ -61,10 +68,11 @@ function open() {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
-  padding: 16px;
+  padding: 0;
   cursor: pointer;
   font-family: inherit;
   transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+  overflow: hidden;
 }
 
 .chip:hover {
@@ -79,7 +87,15 @@ function open() {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 15px;
+  padding: 16px 16px 0;
 }
+
+.chip-preview { aspect-ratio: 16 / 9; background: var(--surface-sunken); overflow: hidden; }
+.chip-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.chip-preview video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.preview-empty { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--ink-300); }
+.preview-empty span { font-size: 26px; line-height: 1; }
+.preview-empty small { font-size: var(--fs-micro); }
 
 .chip-arrow {
   color: var(--ink-300);
@@ -88,6 +104,7 @@ function open() {
 }
 
 .chip-title {
+  padding: 0 16px;
   font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink-900);
@@ -97,10 +114,10 @@ function open() {
 }
 
 .chip-foot {
-  margin-top: 16px;
-  padding-top: 12px;
+  margin: 16px 16px 0;
+  padding: 12px 0 16px;
   border-top: 1px solid var(--line);
 }
 
-.chip-meta { margin-top: 4px; }
+.chip-meta { margin-top: 4px; padding: 0 16px; }
 </style>

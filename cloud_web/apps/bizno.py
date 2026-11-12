@@ -30,6 +30,9 @@ PREFIX = {
     "point_ledger": "L",
     "sign_in_record": "S",
     "subscription": "B",
+    "payment_order": "O",
+    "point_lot": "G",
+    "point_spend": "D",
 }
 
 #: 字段长度，所有模型的 *_no 字段统一用它，避免各表不一致
@@ -82,6 +85,18 @@ def gen_sign_in_no() -> str:
 
 def gen_subscription_no() -> str:
     return _gen("subscription")
+
+
+def gen_payment_order_no() -> str:
+    return _gen("payment_order")
+
+
+def gen_point_lot_no() -> str:
+    return _gen("point_lot")
+
+
+def gen_point_spend_no() -> str:
+    return _gen("point_spend")
 
 
 def backfill_unique_nos(app_label: str, specs):

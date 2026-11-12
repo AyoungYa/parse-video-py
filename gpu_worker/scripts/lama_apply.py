@@ -213,9 +213,28 @@ def main() -> int:
         else:
             dev = "cpu"
     print(f"      推理设备: {dev}", flush=True)
-    from simple_lama_inpainting import SimpleLama
+    from simple_lama_inpainting.models.model import LAMA_MODEL_URL, SimpleLama, download_model
 
-    lama = SimpleLama(device=dev)
+    class PortableSimpleLama(SimpleLama):
+        """CUDA 保存的 TorchScript 先映射到 CPU，再迁移到当前设备。"""
+
+        def __init__(self, device: str) -> None:
+            model_path = os.environ.get("LAMA_MODEL") or download_model(LAMA_MODEL_URL)
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"lama torchscript model not found: {model_path}")
+            self.model = torch.jit.load(model_path, map_location="cpu")
+            self.model.eval()
+            self.model.to(device)
+            self.device = device
+
+    try:
+        lama = PortableSimpleLama(device=dev)
+    except RuntimeError as exc:
+        if dev != "mps" or "MPS backend" not in str(exc):
+            raise
+        print(f"      MPS 不可用，回退 CPU: {str(exc).splitlines()[0]}", flush=True)
+        dev = "cpu"
+        lama = PortableSimpleLama(device=dev)
 
     print("[2/3] 流式渲染（解码 → LaMa → 编码）...", flush=True)
     if args.keyframe_every != 1:

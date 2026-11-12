@@ -5,6 +5,9 @@ last_scanned_at: 2026-06-08
 
 # 全局索引
 
+会员扫码支付：先看 `03_core_flows.md` 的 cloud_web 微信扫码购买流程；
+配置和数据库部署见 `06_build_run_deploy.md`，模块位置见 `02_project_map.md`。
+
 ## 按任务读取
 
 | 任务 | 必读文档 | 可选文档 | 注意事项 |

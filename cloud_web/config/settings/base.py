@@ -167,14 +167,23 @@ STALE_UPLOAD_MINUTES = int(os.getenv("STALE_UPLOAD_MINUTES", "30"))
 OSS_RETENTION_DAYS = max(1, int(os.getenv("OSS_RETENTION_DAYS", "3")))
 
 # ---- 付费规则（成本模型校准值，见 docs/product/成本与选型.md）----
-FREE_TRIAL_COUNT = int(os.getenv("FREE_TRIAL_COUNT", "3"))
+INITIAL_GIFT_POINTS = int(os.getenv("INITIAL_GIFT_POINTS", "100"))
 FREE_TRIAL_MAX_SECONDS = int(os.getenv("FREE_TRIAL_MAX_SECONDS", "30"))
 SIGN_IN_POINTS = int(os.getenv("SIGN_IN_POINTS", "1"))
 SIGN_IN_STREAK_BONUS = int(os.getenv("SIGN_IN_STREAK_BONUS", "5"))
-MONTHLY_POINT_CAP = int(os.getenv("MONTHLY_POINT_CAP", "10"))
 MONTHLY_MINUTES_LIMIT = int(os.getenv("MONTHLY_MINUTES_LIMIT", "100"))
-POINTS_PER_SHORT_VIDEO = int(os.getenv("POINTS_PER_SHORT_VIDEO", "1"))  # <30s
-POINTS_PER_MEDIUM_VIDEO = int(os.getenv("POINTS_PER_MEDIUM_VIDEO", "3"))  # 30s~5min
+
+# 微信支付 Native 扫码：密钥放在部署机器上，路径不提交到仓库。
+WECHAT_PAY_APP_ID = os.getenv("WECHAT_PAY_APP_ID", "")
+WECHAT_PAY_MCH_ID = os.getenv("WECHAT_PAY_MCH_ID", "")
+WECHAT_PAY_MCH_SERIAL_NO = os.getenv("WECHAT_PAY_MCH_SERIAL_NO", "")
+WECHAT_PAY_PRIVATE_KEY_PATH = os.getenv("WECHAT_PAY_PRIVATE_KEY_PATH", "")
+WECHAT_PAY_PUBLIC_KEY_ID = os.getenv("WECHAT_PAY_PUBLIC_KEY_ID", "")
+WECHAT_PAY_PUBLIC_KEY_PATH = os.getenv("WECHAT_PAY_PUBLIC_KEY_PATH", "")
+WECHAT_PAY_API_V3_KEY = os.getenv("WECHAT_PAY_API_V3_KEY", "")
+WECHAT_PAY_NOTIFY_URL = os.getenv("WECHAT_PAY_NOTIFY_URL", "")
+WECHAT_PAY_MONTHLY_PRICE_FEN = int(os.getenv("WECHAT_PAY_MONTHLY_PRICE_FEN", "4900"))
+MEMBERSHIP_PURCHASE_ENABLED = os.getenv("MEMBERSHIP_PURCHASE_ENABLED", "0") == "1"
 
 # ---- 短信验证码登录（provider=console 时不真发，仅打日志）----
 SMS_PROVIDER = os.getenv("SMS_PROVIDER", "console")  # console | aliyun

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { api, formatSize, uploadToOss, type Quota } from "@/api/client";
+import { api, formatSize, grabFrame, uploadToOss, type Quota } from "@/api/client";
 import { preflight, type PreflightReport } from "@/composables/usePreflight";
 import { useUserStore } from "@/stores/user";
 
@@ -137,11 +137,18 @@ async function submit() {
     });
 
     stage.value = "提交处理";
+    let firstFrame = "";
+    try {
+      firstFrame = await grabFrame(r.file, 0.001, 320);
+    } catch {
+      firstFrame = r.thumb;
+    }
     await api.confirmUpload(sign.task_id, {
       duration_ms: r.meta.duration_ms,
       width: r.meta.width,
       height: r.meta.height,
       fps: r.meta.fps,
+      first_frame: firstFrame,
     });
     await user.refresh();
     ElMessage.success("已进入处理队列");

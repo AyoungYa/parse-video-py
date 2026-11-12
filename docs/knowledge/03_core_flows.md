@@ -7,11 +7,27 @@ confidence: high
 
 # 核心业务流程
 
+## cloud_web 免费用户积分
+
+MVP 新注册用户一次性获得 100 个去水印积分。
+注册赠送、每日签到、连签奖励和预留的分享奖励自发放起 10 天有效。每日签到 1 分，每连续 7 天额外 5 分，不设月度发放上限。消费先扣最早到期批次；过期写账本流水；任务失败按原消费批次退款，已到期的赠送积分退款后至少再有效 10 天。旧账本余额首次使用时迁入不过期的历史批次，不追溯清零。免费用户单条视频上限 30 秒，扣分为 `max(1, floor(毫秒 / 10000))`。`PointLot` 和 `PointSpend` 承担批次及退款追踪，`PointLedger` 仍是余额审计账本。
+
+## cloud_web 微信扫码购买包月会员
+
+MVP 暂停购买：默认 `MEMBERSHIP_PURCHASE_ENABLED=0`，账户页不展示购买，创建与查询订单接口返回 404。支付代码保留供后续版本启用。
+
+账户页调用 `POST /api/v1/billing/membership/orders` 创建微信 Native 订单并在浏览器本地生成二维码。
+微信向 `POST /api/v1/billing/wechat/notify` 发送支付通知；服务端验证签名、解密并核对商户、应用、金额、币种、交易号后幂等创建会员订阅。
+账户页每 5 秒查询 `GET /api/v1/billing/membership/orders/<order_no>`；回调延迟时，服务端向微信查单补偿。
+支付订单金额由服务端配置决定；当前只开放包月一次性购买。续费订阅从现有订阅到期后生效。
+
 ## 流程：cloud_web 视频去水印任务
 
 上传确认后进入 `pending`。worker 首次领取进入 `leased`，先下载原片、提取关键帧（`extracting_frames`），再通过抽样帧定位水印（`locating_watermark`）。worker 把关键帧上传到任务专属 OSS 对象，并通过 `POST /api/v1/worker/prepared` 提交建议框；云端释放租约，转为 `awaiting_confirmation`。前端在关键帧上以红框显示建议区域，用户可直接确认或重新框选。
 
 用户通过 `POST /api/v1/tasks/<id>/bbox` 确认后，写入 `bbox` 和 `bbox_confirmed`，不重复扣费，任务回到 `pending`。worker 第二次领取时 `phase=render`，按该区域生成 mask 并去水印（`removing_watermark`），随后进入 `verifying`。只有已确认水印区域且进入验收阶段的任务可上报完成，转 `succeeded`。
+
+LaMa 的 TorchScript 模型可能保存 CUDA 设备信息，worker 先映射到 CPU 加载再移到当前推理设备；本机 MPS 初始化失败时回退 CPU。验收未全绿仍交付成片与报告，但自动退款，且 `complete` 重试不重复退款。
 
 定位置信度不足时仍进入待确认阶段，允许用户从候选框选择或手动画框。准备或渲染阶段租约超时、可重试错误回到 `pending`；重试耗尽转 `failed`。`awaiting_confirmation` 可取消并退款。所有状态变化写 `TaskEvent`。关键帧对象与原片、成片一并按保留期清理。
 
@@ -26,6 +42,8 @@ worker 进程启动后独立于任务每 10 秒调用 `POST /api/v1/worker/alive
 准备阶段的关键帧逐张上传 OSS，并通过 `POST /api/v1/worker/frame` 登记成功上传的图片；接力 worker 先下载已登记且仍存在的帧，只补提缺失的帧。确认水印后，渲染阶段每完成 `build_mask`、`lama_apply`、`verify`，以及可选的修复轮和复验，就先上传阶段产物，再用 `POST /api/v1/worker/checkpoint` 登记在 `Task.checkpoints`，并写 `TaskEvent`。每个成功检查点会重置当前阶段的失败计数，避免前面阶段用完后续重试机会。每次领取使用独立 OSS 产物路径，避免旧 worker 的未过期上传链接覆盖新产物。云端只接受当前租约持有者的上报且检查产物确实存在；新 worker 领取任务时得到这些产物的短时效下载链接，恢复已登记且仍存在的阶段，缺失的阶段重新计算；重算上游阶段会废弃原有下游检查点。最终成片仍通过 `complete` 上报；所有检查点产物随任务素材一起按保留期删除。
 
 相关代码：`cloud_web/apps/tasks/services/lease.py`、`cloud_web/apps/tasks/views_worker.py`、`cloud_web/apps/tasks/views_user.py`、`gpu_worker/core/pipeline.py`、`gpu_worker/core/runner.py`。
+
+上传确认时浏览器从本地视频抓取首帧 JPEG，云端存到任务 OSS 路径并登记在 `Task.checkpoints.first_frame`。最近任务列表返回首帧签名 URL；旧任务优先使用已有关键帧，若两者都没有但原片仍在，则用原视频首帧预览。缩略图随任务素材一并清理。
 
 ## 流程：分享链接解析
 

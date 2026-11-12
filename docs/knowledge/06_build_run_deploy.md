@@ -6,6 +6,16 @@ source_commit: dd55df3
 
 # 构建运行部署
 
+## cloud_web 微信支付配置
+
+扫码购买包月会员需在 `cloud_web/.env` 填写 `WECHAT_PAY_APP_ID`、
+`WECHAT_PAY_MCH_ID`、`WECHAT_PAY_MCH_SERIAL_NO`、`WECHAT_PAY_PRIVATE_KEY_PATH`、
+`WECHAT_PAY_PUBLIC_KEY_ID`、`WECHAT_PAY_PUBLIC_KEY_PATH`、`WECHAT_PAY_API_V3_KEY`、
+`WECHAT_PAY_NOTIFY_URL`，以及可选的 `WECHAT_PAY_MONTHLY_PRICE_FEN`（默认 4900）。
+私钥和微信支付公钥放部署机文件，不写入仓库。通知地址使用公网 HTTPS。
+执行 `cloud_web/manage.py migrate` 创建 `payment_order`；空库初始化脚本为
+`cloud_web/deploy/init_mysql.sql`。
+
 ## 本地统一 Python 环境
 
 根目录 `pyproject.toml` 的 `services` extra 统一声明 `cloud_web` 与 `gpu_worker` 依赖。

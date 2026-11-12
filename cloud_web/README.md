@@ -11,8 +11,11 @@ Django + DRF + MySQL + 阿里云 OSS，前端 Vue 3 + Vite。
 - 上传凭证签发（浏览器直传 OSS）
 - 任务队列与状态机的**唯一权威**（MySQL）
 - Worker 协议 4 个端点（算力机来领任务、报进度、报完成）
-- 积分账本、签到、订阅
+- 积分账本与签到；会员购买留待后续版本
+
 - 交付页：成片下载 + 验收指标报告
+
+MVP 新用户注册赠送 100 个去水印积分，有效期 10 天。签到积分同样 10 天有效：每天 1 分、每连续 7 天额外 5 分，不设月度封顶。每条免费任务最多 30 秒，每满 10 秒扣 1 分、最低扣 1 分。旧余额保留为历史积分批次，不追溯过期。
 
 它**不碰算力**：一行推理代码都没有，也不中转视频文件。
 
@@ -100,6 +103,22 @@ uv sync --extra services --extra web --extra cli --extra wm  # 同步到仓库�
 根目录 `uv.lock` 要提交进 git，供本地统一环境复现。
 
 ## 生产部署
+
+### 微信扫码购买会员
+
+**后续版本功能**。MVP 保持 `MEMBERSHIP_PURCHASE_ENABLED=0`，不展示购买入口，也不接受创建订单请求。
+
+在 `cloud_web/.env` 配置 `WECHAT_PAY_APP_ID`、`WECHAT_PAY_MCH_ID`、
+`WECHAT_PAY_MCH_SERIAL_NO`、`WECHAT_PAY_PRIVATE_KEY_PATH`、
+`WECHAT_PAY_PUBLIC_KEY_ID`、`WECHAT_PAY_PUBLIC_KEY_PATH`、
+`WECHAT_PAY_API_V3_KEY`、`WECHAT_PAY_NOTIFY_URL`。通知地址必须是可从微信访问的
+HTTPS 地址，路径为 `/api/v1/billing/wechat/notify`。商户私钥、微信支付公钥放在
+部署机器上，不要提交到仓库。`WECHAT_PAY_MONTHLY_PRICE_FEN` 设置包月价格，单位分，
+默认 4900；价格变动只影响新订单。部署前执行 `python manage.py migrate`。
+
+用户在账户页生成二维码，支付通知经签名、解密、商户号和金额核对后开通会员；
+页面也会轮询微信订单状态作为通知延迟时的补偿。重复通知不会重复开通。
+当前仅支持包月一次性支付，不自动续费。
 
 ```bash
 cd cloud_web

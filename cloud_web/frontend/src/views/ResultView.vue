@@ -255,15 +255,6 @@ onBeforeUnmount(() => {
             </svg>
             下载成片
           </a>
-          <a
-            v-if="task.report_url"
-            class="btn btn-secondary btn-lg"
-            :href="task.report_url"
-            target="_blank"
-            rel="noopener"
-          >
-            报告 JSON
-          </a>
           <span class="micro muted action-hint">链接 10 分钟内有效 · 成片 {{ site.retentionText }}后自动删除</span>
         </div>
       </template>

@@ -11,6 +11,7 @@ const router = useRouter();
 const user = useUserStore();
 const site = useSiteStore();
 const recent = ref<TaskListItem[]>([]);
+const previewCache = new Map<string, { url: string; kind: "image" | "video"; at: number }>();
 let recentTimer: number | undefined;
 
 const TIPS = [
@@ -26,7 +27,17 @@ function onSubmitted(taskId: string) {
 async function refreshRecent() {
   try {
     const { data } = await api.taskList();
-    recent.value = data.filter((t) => t.status !== "awaiting_upload").slice(0, 4);
+    recent.value = data.filter((t) => t.status !== "awaiting_upload").slice(0, 4).map((task) => {
+      const kind = task.thumbnail_url ? "image" : "video";
+      const current = task.thumbnail_url || task.preview_url || "";
+      const cached = previewCache.get(task.id);
+      if (current && cached?.kind === kind && Date.now() - cached.at < 8 * 60_000) {
+        return kind === "image" ? { ...task, thumbnail_url: cached.url } : { ...task, preview_url: cached.url };
+      }
+      if (current) previewCache.set(task.id, { url: current, kind, at: Date.now() });
+      else previewCache.delete(task.id);
+      return task;
+    });
   } catch {
     // 短暂断网时保留上一份列表，下一轮自动恢复。
   }
